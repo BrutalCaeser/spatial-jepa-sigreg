@@ -11,7 +11,7 @@ output_dir:  "/scratch/${USER}/outputs/gap1"
 # ────────────────────────────────────────────────────────────────────────────
 # Adapter (models/adapter.py — Definition 1.2, foundations.md)
 # ────────────────────────────────────────────────────────────────────────────
-D_in: 1024       # V-JEPA 2.1 ViT-G embedding dimension
+D_in: 1024       # V-JEPA 2.1 ViT-L embedding dimension (vjepa2_1_vit_large_384, img_size=224 → 196 patches)
 d:    256        # Adapter output dimension (ablate: 128, 256, 512)
 
 # ────────────────────────────────────────────────────────────────────────────

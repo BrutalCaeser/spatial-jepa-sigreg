@@ -64,67 +64,113 @@ class VJEPAFeatureExtractor(nn.Module):
             p.requires_grad_(False)
 
     def _load_encoder(self, checkpoint_path: str, device: torch.device) -> nn.Module:
-        """Load V-JEPA 2.1 encoder from checkpoint.
+        """Load V-JEPA 2.1 ViT-L encoder from checkpoint.
 
-        V-JEPA 2.1 checkpoints follow Meta's public release format.
-        Adjust key loading logic if using a different checkpoint format.
+        Uses vjepa2_1_vit_large_384 (ViT-L, embed_dim=1024) with img_size=224
+        so output is 196 patch tokens at 1024-dim (matching build_spec D_in=1024, N=196).
+
+        RoPE interpolation (interpolate_rope=True in backbones.py) allows 224px
+        inference from a model trained at 384px.
+
+        checkpoint_key = "ema_encoder" (EMA-averaged teacher weights, highest quality).
+
+        Checkpoint: vjepa2_1_vitl_dist_vitG_384.pt (~1.2 GB)
+        URL: https://dl.fbaipublicfiles.com/vjepa2/vjepa2_1_vitl_dist_vitG_384.pt
         """
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        # V-JEPA 2.1 checkpoint may store encoder under 'encoder' or 'target_encoder'.
-        if "encoder" in checkpoint:
-            state_dict = checkpoint["encoder"]
-        elif "target_encoder" in checkpoint:
-            state_dict = checkpoint["target_encoder"]
-        elif "model" in checkpoint:
-            state_dict = checkpoint["model"]
-        else:
-            state_dict = checkpoint
+        import sys
+        # Add vjepa2 repo to path (installed via pip install -e or sys.path)
+        vjepa2_repo = os.path.expanduser("~/vjepa2") if not os.path.exists(
+            "/scratch/gupta.yashv/vjepa2") else "/scratch/gupta.yashv/vjepa2"
+        if os.path.exists(vjepa2_repo):
+            sys.path.insert(0, vjepa2_repo)
 
-        # Remove 'module.' prefix from DataParallel if present.
-        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
-
-        # Import V-JEPA 2.1 model (assumes vjepa package is installed).
         try:
-            from vjepa.models.vision_transformer import vit_giant
-            encoder = vit_giant()
-        except ImportError:
+            from app.vjepa_2_1.models import vision_transformer as vit_encoder_mod
+            # V-JEPA 2.1 ViT-L: embed_dim=1024, with img_size=224 → 196 spatial patches
+            encoder = vit_encoder_mod.vit_large(
+                patch_size=16,
+                img_size=(224, 224),
+                num_frames=1,
+                tubelet_size=1,
+                use_sdpa=True,
+                use_SiLU=False,
+                wide_SiLU=True,
+                uniform_power=False,
+                use_rope=True,
+                img_temporal_dim_size=1,
+                interpolate_rope=True,
+            )
+        except (ImportError, Exception) as e:
             raise ImportError(
-                "V-JEPA 2.1 package not found. Clone from Meta's public repo and "
-                "install: pip install -e /path/to/vjepa2"
+                f"V-JEPA 2.1 package not found: {e}\n"
+                "Clone: git clone https://github.com/facebookresearch/vjepa2.git\n"
+                "Install: pip install -e /scratch/$USER/vjepa2 --no-deps"
             )
 
+        # Load checkpoint — key is 'ema_encoder' for V-JEPA 2.1 ViT-L
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        for key in ("ema_encoder", "target_encoder", "encoder", "model"):
+            if key in checkpoint:
+                state_dict = checkpoint[key]
+                break
+        else:
+            state_dict = checkpoint  # checkpoint IS the state dict
+
+        # Strip DataParallel and backbone prefixes.
+        state_dict = {
+            k.replace("module.", "").replace("backbone.", ""): v
+            for k, v in state_dict.items()
+        }
+
         missing, unexpected = encoder.load_state_dict(state_dict, strict=False)
-        if missing:
-            print(f"[WARNING] Missing keys in V-JEPA 2.1 checkpoint: {missing[:5]}...")
+        n_missing = len([k for k in missing if "pos_embed" not in k])
+        if n_missing > 5:
+            print(f"[WARNING] {n_missing} non-pos_embed keys missing from checkpoint.")
+        print(f"[extractor] Loaded V-JEPA 2.1 ViT-L: "
+              f"embed_dim={encoder.embed_dim}, img_size=224, N=196")
         return encoder.to(device)
 
     @torch.no_grad()
     def extract_patches(self, frame: torch.Tensor) -> torch.Tensor:
-        """Extract patch tokens from a single frame.
+        """Extract patch tokens from a single frame (224×224).
+
+        V-JEPA 2.1 ViT-L with img_size=224, patch_size=16, num_frames=1
+        produces exactly 196 patch tokens at 1024-dim.
+
+        The model returns a list of layer outputs (hierarchical_layers).
+        We take the LAST element which is the final encoder output.
 
         Args:
-            frame: Preprocessed frame tensor, shape [1, C, H, W].
+            frame: Preprocessed frame tensor, shape [1, 1, C, H, W] (video format)
+                   or [1, C, H, W] (image format). Will be reshaped as needed.
 
         Returns:
             Patch features, shape [196, 1024].
-            CLS token (index 0) is excluded.
         """
-        output = self.encoder(frame)
-        # V-JEPA 2.1 ViT-G returns patch tokens: [1, N+1, D] or [1, N, D]
-        if isinstance(output, (list, tuple)):
-            tokens = output[-1]   # take last layer output
-        else:
-            tokens = output       # [1, N+1, D] or [1, N, D]
+        # V-JEPA 2.1 expects video input: [B, C, T, H, W] or [B, T, C, H, W]
+        # For single-frame: unsqueeze time dim if needed
+        if frame.dim() == 4:
+            # [1, C, H, W] → [1, C, 1, H, W]
+            frame = frame.unsqueeze(2)
 
-        # If CLS token is present (N+1=197), strip it.
-        if tokens.shape[1] == 197:
-            tokens = tokens[:, 1:, :]   # [1, 196, D]
-        elif tokens.shape[1] == 196:
-            pass
+        output = self.encoder(frame)
+
+        # V-JEPA 2.1 returns a list from hierarchical_layers (last = final output)
+        if isinstance(output, (list, tuple)):
+            tokens = output[-1]   # [1, N, D]
         else:
+            tokens = output       # [1, N, D]
+
+        # tokens shape: [1, N, D] where N=196, D=1024
+        # V-JEPA 2.1 ViT-L does NOT prepend CLS token; pure patch tokens only.
+        # Strip CLS if accidentally present (N+1 case).
+        N = tokens.shape[1]
+        if N == 197:
+            tokens = tokens[:, 1:, :]   # strip CLS → [1, 196, 1024]
+        elif N != 196:
             raise ValueError(
-                f"Unexpected token count {tokens.shape[1]} from V-JEPA 2.1. "
-                f"Expected 196 (no CLS) or 197 (with CLS)."
+                f"Unexpected token count {N} from V-JEPA 2.1 ViT-L (224px). "
+                f"Expected 196. Check img_size and patch_size."
             )
 
         return tokens.squeeze(0).cpu()  # [196, 1024]
