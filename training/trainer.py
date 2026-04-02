@@ -56,12 +56,15 @@ from training.metrics import compute_all_metrics, compute_baseline_metrics
 def load_config(base_path: str, override_path: Optional[str] = None) -> dict:
     """Load base YAML config, optionally merging a condition-specific override.
 
+    Environment variables in string values are expanded so YAML can use
+    ${USER} or $SCRATCH without hardcoding cluster-specific paths.
+
     Args:
         base_path:     Path to configs/base.yaml.
         override_path: Path to configs/condition_X.yaml (optional).
 
     Returns:
-        Merged config dict.
+        Merged config dict with shell env vars expanded in all string values.
     """
     with open(base_path) as f:
         cfg = yaml.safe_load(f)
@@ -71,6 +74,9 @@ def load_config(base_path: str, override_path: Optional[str] = None) -> dict:
             override = yaml.safe_load(f)
         cfg.update(override)
 
+    # Expand environment variables in all string values.
+    # e.g. "/scratch/${USER}/data" -> "/scratch/gupta.yashv/data"
+    cfg = {k: (os.path.expandvars(v) if isinstance(v, str) else v) for k, v in cfg.items()}
     return cfg
 
 
