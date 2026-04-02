@@ -84,10 +84,10 @@ def parse_args() -> argparse.Namespace:
 def load_ssv2_hf(split: str, hf_cache: str, hf_token: str | None):
     """Load SSv2 from HuggingFace with streaming."""
     try:
-        from datasets import load_dataset
-    except ImportError:
-        print("[ERROR] 'datasets' library not installed.")
-        print("        Run: pip install datasets")
+        from datasets import load_dataset  # noqa: F401
+    except (ImportError, Exception) as e:
+        print(f"[ERROR] HuggingFace 'datasets' library not available: {e}")
+        print("        Run: pip install 'datasets>=2.18.0'")
         sys.exit(1)
 
     os.environ["HF_DATASETS_CACHE"] = hf_cache

@@ -49,9 +49,13 @@ conda activate gap1
 
 echo "[dl] Python: $(python --version)"
 
-# Install datasets library if not present
-python -c "import datasets" 2>/dev/null || pip install datasets -q
-echo "[dl] datasets library: $(python -c 'import datasets; print(datasets.__version__)')"
+# Force-install correct version of datasets (verify load_dataset is importable)
+python -c "from datasets import load_dataset" 2>/dev/null || {
+    echo "[dl] Installing/upgrading HuggingFace datasets library..."
+    pip install "datasets>=2.18.0" --upgrade -q
+}
+# Verify
+python -c "from datasets import load_dataset; import importlib.metadata; print('datasets:', importlib.metadata.version('datasets'))"
 
 # ── Run download ─────────────────────────────────────────────────────────────
 cd "${PROJECT_DIR}"
