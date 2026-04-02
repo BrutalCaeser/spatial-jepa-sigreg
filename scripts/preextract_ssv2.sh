@@ -42,7 +42,7 @@ VIDEO_DIR="/scratch/${USER}/data/ssv2/videos"
 LABEL_FILE="/scratch/${USER}/data/ssv2/labels.json"
 ANNOTATION_FILE="/scratch/${USER}/data/ssv2/annotations.json"
 OUTPUT_DIR="/scratch/${USER}/data/ssv2_vjepa21_features"
-CHECKPOINT="/scratch/${USER}/checkpoints/vjepa21_vitg.pt"
+CHECKPOINT="/scratch/${USER}/checkpoints/vjepa21_vitl.pt"   # V-JEPA 2.1 ViT-L, 4.8GB
 N_CLIPS=20000
 
 # ── Validate prerequisites ────────────────────────────────────────────────────
