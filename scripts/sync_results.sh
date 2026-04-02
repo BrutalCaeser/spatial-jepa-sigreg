@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-HPC_HOST="discovery"              # ~/.ssh/config alias → login.discovery.neu.edu
+HPC_HOST="explorer"               # ~/.ssh/config alias → explorer.neu.edu (Explorer cluster)
 HPC_USER="gupta.yashv"            # Northeastern HPC username
 HPC_SCRATCH="/scratch/${HPC_USER}"
 
