@@ -18,8 +18,8 @@
 
 set -euo pipefail
 
-HPC_HOST="explorer"          # matches ~/.ssh/config alias
-HPC_USER="ydg"
+HPC_HOST="discovery"              # ~/.ssh/config alias → login.discovery.neu.edu
+HPC_USER="gupta.yashv"            # Northeastern HPC username
 HPC_SCRATCH="/scratch/${HPC_USER}"
 
 LOCAL_OUTPUTS="./outputs"
