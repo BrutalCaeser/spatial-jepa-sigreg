@@ -85,36 +85,43 @@ assert "ema_encoder" in keys, f"ema_encoder key missing! Got: {keys}"
 print("[data] V-JEPA 2.1 ViT-L checkpoint verified.")
 PYEOF
 
-# ── Step 3: SSv2 data instructions ───────────────────────────────────────────
+# ── Step 3: SSv2 download from HuggingFace ───────────────────────────────────
 echo ""
 echo "[data] Step 3: SSv2 (Something-Something v2)"
+echo "[data]   Source: HuggingFaceM4/something_something_v2"
+echo "[data]   License: Qualcomm research license (non-commercial)"
 echo ""
-echo "  SSv2 requires manual registration. Steps:"
-echo ""
-echo "  1. Register at:"
-echo "     https://developer.qualcomm.com/software/ai-datasets/something-something"
-echo ""
-echo "  2. After approval, download:"
-echo "     - something-something-v2-labels.json     → ${DATA_DIR}/labels.json"
-echo "     - something-something-v2-train.json      → ${DATA_DIR}/annotations.json"
-echo "     - 20bn-something-something-v2-{00..19}   → extract to ${DATA_DIR}/videos/"
-echo ""
-echo "  3. If you already have SSv2 videos elsewhere on the cluster, run:"
-echo "     ln -s /path/to/ssv2/videos ${DATA_DIR}/videos"
-echo ""
+
+# Install datasets library if not present
+python -c "import datasets" 2>/dev/null || pip install datasets -q
 
 # Check if SSv2 is already available
 if [ -f "${DATA_DIR}/labels.json" ] && [ -f "${DATA_DIR}/annotations.json" ]; then
-    echo "[data] SSv2 metadata found: ${DATA_DIR}/"
     N_VIDEOS=$(find "${DATA_DIR}/videos" -name "*.webm" -o -name "*.mp4" 2>/dev/null | wc -l)
-    echo "[data] Videos found: ${N_VIDEOS}"
-    if [ "${N_VIDEOS}" -gt 100 ]; then
-        echo "[data] SSv2 appears ready. Proceed with: sbatch scripts/preextract_ssv2.sh"
+    echo "[data] SSv2 metadata found. Videos: ${N_VIDEOS}"
+    if [ "${N_VIDEOS}" -gt 15000 ]; then
+        echo "[data] ✓ SSv2 ready. Proceed with: sbatch scripts/preextract_ssv2.sh"
     else
-        echo "[data] WARNING: Fewer than 100 video files found. Check ${DATA_DIR}/videos/"
+        echo "[data] Resuming download (${N_VIDEOS}/20000 clips so far)..."
+        python scripts/download_ssv2_hf.py \
+            --output_dir "${DATA_DIR}" \
+            --split train \
+            --n_clips 20000 \
+            --hf_cache "/scratch/${USER}/hf_cache" \
+            --seed 42
     fi
 else
-    echo "[data] SSv2 metadata not yet present. Complete Step 3 manually."
+    echo "[data] Downloading SSv2 from HuggingFace (20K clips, ~15-30 min)..."
+    echo "[data] Note: First run requires agreeing to Qualcomm license at:"
+    echo "[data]   https://huggingface.co/datasets/HuggingFaceM4/something_something_v2"
+    echo "[data] If authentication fails, run: huggingface-cli login"
+    echo ""
+    python scripts/download_ssv2_hf.py \
+        --output_dir "${DATA_DIR}" \
+        --split train \
+        --n_clips 20000 \
+        --hf_cache "/scratch/${USER}/hf_cache" \
+        --seed 42
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
