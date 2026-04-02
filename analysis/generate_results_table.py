@@ -6,7 +6,7 @@ This script reads all metric values directly from the W&B API.
 
 Usage:
     python analysis/generate_results_table.py \
-        --entity YOUR_WANDB_ENTITY \
+        --entity brutalcaesar \
         --project gap1-sigreg-spatial \
         --output_dir analysis/outputs
 

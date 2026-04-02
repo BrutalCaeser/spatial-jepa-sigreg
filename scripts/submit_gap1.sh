@@ -77,7 +77,7 @@ if [ "$DRY_RUN" = false ]; then
     done
     echo ""
     echo "[submit] Monitor with: squeue -u \$USER"
-    echo "[submit] W&B dashboard: https://wandb.ai/YOUR_ENTITY/gap1-sigreg-spatial"
+    echo "[submit] W&B dashboard: https://wandb.ai/brutalcaesar/gap1-sigreg-spatial"
 fi
 echo "[submit] ============================================="
 

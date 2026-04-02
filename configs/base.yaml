@@ -62,4 +62,4 @@ save_every:  10000
 
 # W&B configuration
 wandb_project: "gap1-sigreg-spatial"
-wandb_entity:  "BrutalCaeser"
+wandb_entity:  "brutalcaesar"
