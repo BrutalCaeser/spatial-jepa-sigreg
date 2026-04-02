@@ -1,0 +1,31 @@
+# Condition F — Information Constraint Only (Ablation)
+#
+# Definition 3.7 (foundations.md):
+#   L = L_pred(z_hat, z_t) + lambda_2 * L_info_dense(z_hat, z_t)
+#
+# No SIGReg, no stop-gradient. Tests whether L_info alone prevents collapse.
+#
+# Critical insight (foundations.md Section 5 — Condition F):
+#   L_info_dense alone CANNOT prevent collapse because:
+#     If A_theta(f) -> constant c, then z_hat -> c (predictor outputs constant)
+#     and z_t -> c (target also constant).
+#     Cov(constant, constant) = 0 -> L_info_dense = 0 (no penalty for collapse).
+#
+# This ablation confirms that SIGReg is NECESSARY for collapse prevention.
+# L_info is helpful but not sufficient alone.
+#
+# Critical constraints (CLAUDE.md):
+#   - weight_decay = 0.0 (Rule 5: Conditions A and F must have weight_decay=0)
+#     Why: Must remove all implicit regularization to confirm pure L_info behavior.
+#
+# Expected: F collapses (or partially collapses), confirming SIGReg is necessary.
+# If F does NOT collapse: interesting finding — document and investigate.
+
+condition:    "F"
+stop_grad:    false
+lambda_1:     0.0           # NO SIGReg
+lambda_2:     0.1           # L_info_dense only
+lambda_3:     0.0
+use_dense_info: true
+weight_decay: 0.0           # RULE 5: Conditions A and F must have weight_decay=0
+lr_warmup:    true

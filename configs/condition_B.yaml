@@ -1,0 +1,22 @@
+# Condition B — Stop-Gradient Only
+#
+# Definition 3.7 (foundations.md): L = L_pred(z_hat, sg(z_t))
+# z_t = adapter(f_t).detach()  — stop-gradient applied to adapter output.
+# No SIGReg. Tests whether stop-gradient alone prevents collapse with shared weights.
+#
+# Two valid outcomes (build_spec.md FM2):
+#   1. B also collapses -> stop-grad insufficient for shared-weight adapter
+#      (supports LeWM hypothesis that SIGReg is necessary)
+#   2. B does NOT collapse -> optimization asymmetry from stop-grad provides stabilization
+#      (interesting finding, document it)
+#
+# Note: stop_grad=true here means z_t = adapter(f_t).detach() inside compute_loss().
+# This is CORRECT (Rule 3). It is NOT f_t.detach() (no-op on frozen features).
+
+condition:    "B"
+stop_grad:    true
+lambda_1:     0.0
+lambda_2:     0.0
+lambda_3:     0.0
+weight_decay: 0.01          # Keep default (stop-grad provides some implicit stabilization)
+lr_warmup:    true

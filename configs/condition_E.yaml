@@ -1,0 +1,38 @@
+# Condition E — Proposed Method: SIGReg + Dense Information Constraint
+#
+# Definition 3.7 (foundations.md):
+#   L = L_pred(z_hat, z_t)
+#     + lambda_1 * SIGReg_global(z_c)
+#     + lambda_2 * L_info_dense(z_hat, z_t)
+#
+# No stop-gradient. This is the PROPOSED METHOD.
+# SIGReg prevents collapse (Claim 1).
+# L_info_dense encourages per-patch alignment between prediction and target.
+# L_info_dense preserves spatial structure (by computing at each token position).
+#
+# Why no stop-gradient: SIGReg replaces the role of stop-grad (Definition 2.3,
+# foundations.md). Adding stop-grad is redundant and may slow convergence.
+#
+# L_info_dense (Definition 3.5, foundations.md):
+#   For each n in {0,..,N-1}:
+#       C_n = (1/B) * z_hat_c[:,n,:]^T @ z_t_c[:,n,:]
+#   L_info_dense = -(1/N) * sum_n Tr(C_n)
+#
+# RULE 2 enforced inside compute_loss(): z_hat is ALWAYS first argument to L_info.
+# RULE 1 enforced inside compute_loss(): SIGReg applied to z_c, NOT z_hat.
+#
+# Prediction (foundations.md Section 5):
+#   - erank: High (SIGReg maintains rank)
+#   - probe_acc: HIGHEST of all conditions
+#   - xcov_trace_dense: HIGHEST (by construction of L_info_dense)
+#   - neighbor_corr: Moderate-high
+
+condition:    "E"
+stop_grad:    false
+lambda_1:     0.1           # SIGReg weight
+lambda_2:     0.1           # L_info_dense weight
+lambda_3:     0.0           # L_cov disabled (enable at 0.01 if FM4: NaN in L_info)
+sigreg_axis:  "global"
+use_dense_info: true        # Use L_info_dense (per-patch), not L_info_pooled
+weight_decay: 0.01
+lr_warmup:    true

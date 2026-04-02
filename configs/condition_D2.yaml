@@ -1,0 +1,29 @@
+# Condition D2 — Per-Channel SIGReg (No Stop-Gradient)
+#
+# Definition 3.7 (foundations.md):
+#   L = L_pred(z_hat, z_t) + lambda_1 * SIGReg_channel(z_c)
+#
+# No stop-gradient. SIGReg applied per-channel (feature dimension).
+# Each feature dimension j independently pushed toward N(0,1).
+# K = B*N scalar values per dimension, no random projections needed.
+#
+# Intermediate spatial intervention:
+#   - Each feature dimension is marginally Gaussian
+#   - Cross-dimension dependence is NOT enforced
+#   - Spatial token positions are NOT independently regularized
+#
+# Prediction (foundations.md Section 5):
+#   - erank: High
+#   - neighbor_corr: Moderate (between D1 and D3)
+#   - probe_acc: Moderate
+#
+# Ordering prediction: D3 > D2 > D1 for spatial coherence and probe accuracy.
+
+condition:    "D2"
+stop_grad:    false
+lambda_1:     0.1
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "channel"     # Per-dimension EP test: (1/d)*sum_j T(z_flat[:,j])
+weight_decay: 0.01
+lr_warmup:    true

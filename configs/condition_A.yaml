@@ -1,0 +1,23 @@
+# Condition A — Collapse Baseline
+#
+# Definition 3.7 (foundations.md): L = L_pred(z_hat, z_t)
+# No stop-gradient, no SIGReg, no L_info.
+# Gradient flows through BOTH z_c and z_t paths (shared adapter weights).
+# This is the trivial fixed point where A_theta(f) -> constant.
+#
+# Critical constraints (CLAUDE.md):
+#   - weight_decay = 0.0  (remove ALL implicit regularization)
+#   - lr_warmup = false   (warmup slows collapse dynamics)
+#   - grad_clip = 1.0     (raise to 10.0 if FM1: collapse not observed by step 5000)
+#
+# Expected: erank -> 1 within 2000 steps.
+# Halt rule: if erank > 5 after 5000 steps -> execute FM1 (build_spec.md Section 6).
+
+condition:    "A"
+stop_grad:    false
+lambda_1:     0.0          # No SIGReg
+lambda_2:     0.0          # No L_info
+lambda_3:     0.0          # No L_cov
+weight_decay: 0.0          # RULE 5: Conditions A and F must have weight_decay=0
+lr_warmup:    false        # No warmup — need fast collapse for early detection
+grad_clip:    1.0          # Raise to 10.0 if FM1 triggered

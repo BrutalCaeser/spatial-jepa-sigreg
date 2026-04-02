@@ -1,0 +1,24 @@
+# Condition C — Stop-Gradient + Global SIGReg
+#
+# Definition 3.7 (foundations.md):
+#   L = L_pred(z_hat, sg(z_t)) + lambda_1 * SIGReg_global(z_c)
+#
+# Stop-gradient: z_t = adapter(f_t).detach()
+# SIGReg applied to z_c (context adapter output, pooled globally).
+# Standard approach from LeWM with stop-gradient added.
+#
+# Measures: Does SIGReg prevent collapse? Does it preserve spatial structure?
+# The SIGReg on pooled representation tests whether global Gaussianity pressure
+# affects per-token spatial coherence.
+#
+# Expected: erank high (SIGReg prevents collapse).
+#           neighbor_corr moderate (global pooling less destructive than per-token).
+
+condition:    "C"
+stop_grad:    true
+lambda_1:     0.1           # SIGReg weight
+lambda_2:     0.0           # No L_info
+lambda_3:     0.0
+sigreg_axis:  "global"      # Pool then regularize: z_c.mean(dim=1) -> [B, d]
+weight_decay: 0.01
+lr_warmup:    true

@@ -1,0 +1,27 @@
+# Condition D1 — Per-Token SIGReg (No Stop-Gradient)
+#
+# Definition 3.7 (foundations.md):
+#   L = L_pred(z_hat, z_t) + lambda_1 * SIGReg_token(z_c)
+#
+# No stop-gradient: z_t = adapter(f_t)  (gradient flows through both paths)
+# SIGReg is the SOLE collapse prevention mechanism.
+# Applied per-token: z_c.reshape(B*N, d) -> K=B*N samples.
+#
+# Strongest spatial intervention: each (batch, position) token independently
+# pushed toward N(0,I). This destroys inter-token spatial relationships.
+#
+# Prediction (foundations.md Section 5):
+#   - erank: High (SIGReg prevents collapse)
+#   - neighbor_corr: LOW (per-token Gaussianity destroys spatial coherence)
+#   - probe_acc: Lower than D3 (spatial structure lost)
+#
+# Ordering prediction: spatial coherence D3 > D2 > D1
+
+condition:    "D1"
+stop_grad:    false
+lambda_1:     0.1
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "token"       # Flatten: z_c.reshape(B*N, d)  K = B*N
+weight_decay: 0.01
+lr_warmup:    true

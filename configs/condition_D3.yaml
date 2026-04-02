@@ -1,0 +1,29 @@
+# Condition D3 — Global SIGReg, No Stop-Gradient
+#
+# Definition 3.7 (foundations.md):
+#   L = L_pred(z_hat, z_t) + lambda_1 * SIGReg_global(z_c)
+#
+# No stop-gradient. Global SIGReg (pooled): z_c.mean(dim=1) -> [B, d].
+# K = B samples. Weakest spatial intervention — closest to LeWM style.
+#
+# Differs from Condition C in that there is NO stop-gradient here.
+# This condition directly tests whether global SIGReg alone (without stop-grad)
+# prevents collapse with shared-weight adapter.
+#
+# Prediction (foundations.md Section 5):
+#   - erank: High (SIGReg prevents collapse)
+#   - neighbor_corr: Moderate (spatial averaging before regularization preserves
+#     coarse structure in pooled representation, less destructive than D1)
+#   - probe_acc: Moderate (baseline before L_info is added)
+#
+# Used as the primary comparison for Condition E (SIGReg + L_info).
+# E should have higher probe_acc than D3 — that is Claim 3 of the paper.
+
+condition:    "D3"
+stop_grad:    false
+lambda_1:     0.1
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "global"      # Pool: z_c.mean(dim=1) -> [B, d], K=B samples
+weight_decay: 0.01
+lr_warmup:    true
