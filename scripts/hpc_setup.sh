@@ -34,21 +34,25 @@ echo "=========================================="
 # ── 1. Load modules ──────────────────────────────────────────────────────────
 echo "[setup] Loading modules..."
 module purge
+# Northeastern Discovery cluster: cuda/12.1 for L40 / V100-SXM2 nodes
 module load cuda/12.1 2>/dev/null || module load cuda/11.8 2>/dev/null || echo "[setup] WARNING: No CUDA module found — will use CPU"
 module list 2>&1 | grep -i cuda || true
 
 # ── 2. Create conda environment ──────────────────────────────────────────────
 echo "[setup] Creating conda environment '${CONDA_ENV}'..."
 
-# Initialize conda for this shell.
-source "$(conda info --base)/etc/profile.d/conda.sh"
+# Initialize conda for this shell (EL9 path first, centos7 fallback).
+CONDA_BASE="/shared/EL9/explorer/anaconda3/2024.06"
+[ -d "${CONDA_BASE}" ] || CONDA_BASE="/shared/centos7/anaconda3/2021.05"
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
+echo "[setup] Conda base: ${CONDA_BASE}"
 
 if conda env list | grep -q "^${CONDA_ENV} "; then
     echo "[setup] Environment '${CONDA_ENV}' already exists. Updating..."
     conda activate "${CONDA_ENV}"
 else
-    echo "[setup] Creating new environment '${CONDA_ENV}' (Python 3.11)..."
-    conda create -n "${CONDA_ENV}" python=3.11 -y
+    echo "[setup] Creating new environment '${CONDA_ENV}' (Python 3.10)..."
+    conda create -n "${CONDA_ENV}" python=3.10 -y -c conda-forge
     conda activate "${CONDA_ENV}"
 fi
 

@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=gap1-cond
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:1
+#SBATCH --partition=sharing
+#SBATCH --gres=gpu:l40:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=40G
-#SBATCH --time=12:00:00
+#SBATCH --time=1:00:00
 #SBATCH --output=/scratch/%u/logs/gap1_cond_%x_%j.out
 #SBATCH --error=/scratch/%u/logs/gap1_cond_%x_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -47,7 +47,7 @@ fi
 # ── Paths (all on scratch for I/O performance) ────────────────────────────────
 FEATURE_DIR="/scratch/${USER}/data/ssv2_vjepa21_features"
 OUTPUT_DIR="/scratch/${USER}/outputs/gap1"
-PROJECT_DIR="${HOME}/gap1-experiment"   # cloned repo lives in $HOME
+PROJECT_DIR="/scratch/${USER}/gap1-experiment"   # cloned repo lives in scratch
 LOG_DIR="/scratch/${USER}/logs"
 
 mkdir -p "${OUTPUT_DIR}" "${LOG_DIR}"
@@ -67,8 +67,11 @@ fi
 
 # ── Activate environment ──────────────────────────────────────────────────────
 module purge
-module load cuda/12.1
-source "$(conda info --base)/etc/profile.d/conda.sh"
+module load cuda/12.1 2>/dev/null || module load cuda/11.8 2>/dev/null
+# Northeastern Discovery: EL9 conda path (centos7 fallback)
+CONDA_BASE="/shared/EL9/explorer/anaconda3/2024.06"
+[ -d "${CONDA_BASE}" ] || CONDA_BASE="/shared/centos7/anaconda3/2021.05"
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate gap1
 
 cd "${PROJECT_DIR}"
