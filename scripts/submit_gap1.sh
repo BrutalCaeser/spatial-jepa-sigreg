@@ -9,9 +9,9 @@
 #   --critical-only  Submit only A, B, D3, E, F (minimum viable experiment)
 #   --dry-run        Print sbatch commands without executing them
 #
-# Total compute: 76 GPU-hours across 8 jobs on L40 (build_spec.md Section 13)
-# Minimum viable: 44 GPU-hours (A, B, D3, E, F)
-# HPC partition: sharing, GPU: l40
+# Total compute: ~8 GPU-hours across 8 jobs on V100-SXM2 (build_spec.md Section 13)
+# Minimum viable: 5 jobs (A, B, D3, E, F)
+# HPC: explorer.northeastern.edu, partition=gpu, GPU=v100-sxm2
 #
 # Prerequisites (all must pass before running):
 #   1. python -m pytest tests/ -v --timeout=120   (zero failures)

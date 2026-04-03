@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=gap1-extract
-#SBATCH --partition=sharing
-#SBATCH --gres=gpu:l40:1
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:v100-sxm2:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=1:00:00
+#SBATCH --time=8:00:00
 #SBATCH --output=/scratch/%u/logs/gap1_extract_%j.out
 #SBATCH --error=/scratch/%u/logs/gap1_extract_%j.err
 #SBATCH --mail-type=END,FAIL
