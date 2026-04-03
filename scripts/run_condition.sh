@@ -44,9 +44,11 @@ if ! echo "${VALID_CONDITIONS}" | grep -qw "${CONDITION}"; then
     exit 1
 fi
 
-# ── Resolve username (USER may be unbound on some SLURM nodes) ───────────────
+# ── Resolve username and home (USER/HOME may be unbound on some SLURM nodes) ─
 USER="${USER:-${SLURM_JOB_USER:-$(whoami)}}"
 export USER
+HOME="${HOME:-/home/${USER}}"
+export HOME
 
 # ── Paths (all on scratch for I/O performance) ────────────────────────────────
 FEATURE_DIR="/scratch/${USER}/data/ssv2_vjepa21_features"
