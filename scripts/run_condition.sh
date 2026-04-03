@@ -112,11 +112,19 @@ echo "[run] Smoke test PASSED."
 echo "[run] Starting full training — Condition ${CONDITION}..."
 echo "[run] W&B project: gap1-sigreg-spatial | entity: ${WANDB_ENTITY}"
 
+# Optional resume from checkpoint (set RESUME_CKPT env var to checkpoint path)
+RESUME_ARG=""
+if [ -n "${RESUME_CKPT:-}" ]; then
+    echo "[run] Resuming from checkpoint: ${RESUME_CKPT}"
+    RESUME_ARG="--resume ${RESUME_CKPT}"
+fi
+
 python -m training.trainer \
     --config        configs/base.yaml \
     --override      "configs/condition_${CONDITION}.yaml" \
     --wandb_project gap1-sigreg-spatial \
-    --wandb_entity  "${WANDB_ENTITY}"
+    --wandb_entity  "${WANDB_ENTITY}" \
+    ${RESUME_ARG}
 
 EXIT_CODE=$?
 echo "=========================================="
