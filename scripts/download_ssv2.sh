@@ -51,7 +51,8 @@ echo "[dl] Python: $(python --version)"
 
 # The vjepa2 repo (pip install -e) adds vjepa2/src to sys.path which contains
 # a src/datasets/ namespace dir that shadows the HuggingFace datasets package.
-# Verify we can import HuggingFace datasets without that path conflict.
+# Use conda-forge for installation (prebuilt binaries; avoids GCC 4.8 pandas
+# build failure that occurs when pip tries to build pandas from source).
 python - << 'PYEOF'
 import sys
 sys.path = [p for p in sys.path if "/vjepa2/src" not in p]
@@ -59,10 +60,12 @@ try:
     from datasets import load_dataset
     import importlib.metadata
     print(f"[dl] datasets OK: {importlib.metadata.version('datasets')}")
-except ImportError:
-    import subprocess, sys
-    print("[dl] Installing HuggingFace datasets...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "datasets>=2.18.0", "-q"])
+except (ImportError, ModuleNotFoundError):
+    import subprocess
+    print("[dl] Installing HuggingFace datasets via conda-forge...")
+    subprocess.check_call(["conda", "install", "-c", "conda-forge",
+                           "datasets>=2.18", "-y", "-q"])
+    sys.path = [p for p in sys.path if "/vjepa2/src" not in p]
     from datasets import load_dataset
     print("[dl] datasets installed OK")
 PYEOF
