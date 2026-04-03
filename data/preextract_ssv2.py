@@ -184,10 +184,23 @@ class VJEPAFeatureExtractor(nn.Module):
 # ---------------------------------------------------------------------------
 
 def build_transform(image_size: int = 224) -> T.Compose:
-    """Standard V-JEPA 2.1 preprocessing for a single frame."""
+    """Standard V-JEPA 2.1 preprocessing for a single frame (PIL input)."""
     return T.Compose([
         T.Resize((image_size, image_size), antialias=True),
         T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+
+def build_tensor_transform(image_size: int = 224) -> T.Compose:
+    """V-JEPA 2.1 preprocessing for tensor input (avoids numpy conflict on HPC).
+
+    Use with torchvision.io.read_image() which returns uint8 tensor directly,
+    bypassing PIL→numpy→tensor conversion that breaks on nodes with dual numpy.
+    Input: float32 tensor [C, H, W] in [0, 1].
+    """
+    return T.Compose([
+        T.Resize((image_size, image_size), antialias=True),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
@@ -245,7 +258,7 @@ def load_two_consecutive_frames_from_dir(
         (frame_c, frame_t) tensors each [1, C, H, W], or None on failure.
     """
     try:
-        from PIL import Image
+        import torchvision.io as tvio
         if n_frames < 2:
             return None
         # Sample random consecutive pair (1-indexed frames)
@@ -259,13 +272,14 @@ def load_two_consecutive_frames_from_dir(
                 return None
             idx = random.randint(0, len(jpgs) - 2)
             fc_path, ft_path = jpgs[idx], jpgs[idx + 1]
-        img_c = Image.open(fc_path).convert("RGB")
-        img_t = Image.open(ft_path).convert("RGB")
+        # Use read_image → float tensor to bypass PIL→numpy→tensor (numpy conflict)
+        img_c = tvio.read_image(str(fc_path)).float() / 255.0  # [C, H, W]
+        img_t = tvio.read_image(str(ft_path)).float() / 255.0
         return transform(img_c).unsqueeze(0), transform(img_t).unsqueeze(0)
     except Exception as _e:
-        # Log first occurrence per unique error type to diagnose silent failures
         import sys
-        print(f"[frame_loader] {type(_e).__name__}: {_e} | frame_dir={frame_dir}", file=sys.stderr, flush=True)
+        print(f"[frame_loader] {type(_e).__name__}: {_e} | frame_dir={frame_dir}",
+              file=sys.stderr, flush=True)
         return None
 
 
@@ -398,7 +412,12 @@ def main():
     # Load V-JEPA 2.1 extractor.
     print(f"[preextract] Loading V-JEPA 2.1 from {args.checkpoint}...")
     extractor = VJEPAFeatureExtractor(args.checkpoint, device)
-    transform = build_transform(args.image_size)
+    # VideoFolder uses tensor-based transform (avoids numpy conflict on HPC compute nodes)
+    # JSON / video-file format uses PIL-based transform
+    if args.annotation_format == "videofolder":
+        transform = build_tensor_transform(args.image_size)
+    else:
+        transform = build_transform(args.image_size)
     print("[preextract] Encoder loaded and frozen.")
 
     # Extract features.
