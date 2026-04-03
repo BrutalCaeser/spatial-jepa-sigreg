@@ -262,7 +262,10 @@ def load_two_consecutive_frames_from_dir(
         img_c = Image.open(fc_path).convert("RGB")
         img_t = Image.open(ft_path).convert("RGB")
         return transform(img_c).unsqueeze(0), transform(img_t).unsqueeze(0)
-    except Exception:
+    except Exception as _e:
+        # Log first occurrence per unique error type to diagnose silent failures
+        import sys
+        print(f"[frame_loader] {type(_e).__name__}: {_e} | frame_dir={frame_dir}", file=sys.stderr, flush=True)
         return None
 
 
