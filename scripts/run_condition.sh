@@ -26,7 +26,7 @@
 set -euo pipefail
 
 CONDITION="${CONDITION:-E}"
-WANDB_ENTITY="${WANDB_ENTITY:-BrutalCaeser}"
+WANDB_ENTITY="${WANDB_ENTITY:-brutalcaesar-northeastern-university}"
 
 echo "=========================================="
 echo "GAP 1 Training — Condition ${CONDITION}"
