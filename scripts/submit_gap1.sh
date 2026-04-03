@@ -56,7 +56,7 @@ fi
 # Submit each condition.
 JOB_IDS=()
 for CONDITION in "${CONDITIONS[@]}"; do
-    CMD="sbatch --export=CONDITION=${CONDITION} scripts/run_condition.sh"
+    CMD="sbatch --job-name=gap1-${CONDITION} --export=CONDITION=${CONDITION} scripts/run_condition.sh"
     echo "[submit] ${CMD}"
 
     if [ "$DRY_RUN" = false ]; then
