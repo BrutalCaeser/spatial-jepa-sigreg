@@ -1,0 +1,17 @@
+# Lambda sweep — token SIGReg, lambda_1 = 10.0
+# Uses sigreg_token (K=B*N=6272) instead of sigreg_global (K=B=32)
+# Hypothesis: token SIGReg has enough statistical power (6272 samples)
+# that the 1D-collapse loophole doesn't work.
+
+condition:    "D1-lam10"
+stop_grad:    false
+lambda_1:     10.0
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "token"
+weight_decay: 0.01
+lr_warmup:    true
+
+# Finer logging for diagnostic sweep
+log_every:    50
+eval_every:   200
