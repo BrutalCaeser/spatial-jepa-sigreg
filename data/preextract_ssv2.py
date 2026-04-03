@@ -190,17 +190,17 @@ def build_transform(image_size: int = 224) -> T.Compose:
 
 
 # ---------------------------------------------------------------------------
-# Video frame loader
+# Video frame loaders
 # ---------------------------------------------------------------------------
 
 def load_two_consecutive_frames(
     video_path: str,
     transform: T.Compose,
 ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
-    """Load two random consecutive frames from a video.
+    """Load two random consecutive frames from a video file (.webm/.mp4).
 
     Args:
-        video_path: Path to video file (.webm or .mp4).
+        video_path: Path to video file.
         transform:  Image preprocessing transform.
 
     Returns:
@@ -208,34 +208,121 @@ def load_two_consecutive_frames(
     """
     try:
         import torchvision.io as tvio
-        # Read video as [T, H, W, C] uint8 tensor.
         video, _, _ = tvio.read_video(video_path, output_format="TCHW", pts_unit="sec")
-        # video: [T, C, H, W]  uint8
         T_total = video.shape[0]
         if T_total < 2:
             return None
-
-        # Sample a random consecutive pair.
         t = random.randint(0, T_total - 2)
-        frame_c = video[t].float() / 255.0     # [C, H, W]
-        frame_t = video[t + 1].float() / 255.0  # [C, H, W]
-
-        # Apply preprocessing (resize + normalize).
-        # Transform expects PIL or tensor [C, H, W] in [0,1].
-        import torchvision.transforms.functional as TF
+        frame_c = video[t].float() / 255.0
+        frame_t = video[t + 1].float() / 255.0
         from PIL import Image
-        import numpy as np
-
         img_c = Image.fromarray(frame_c.permute(1, 2, 0).numpy().astype("uint8"))
         img_t = Image.fromarray(frame_t.permute(1, 2, 0).numpy().astype("uint8"))
-
-        fc = transform(img_c).unsqueeze(0)  # [1, C, 224, 224]
-        ft = transform(img_t).unsqueeze(0)  # [1, C, 224, 224]
-
-        return fc, ft
-
-    except Exception as e:
+        return transform(img_c).unsqueeze(0), transform(img_t).unsqueeze(0)
+    except Exception:
         return None
+
+
+def load_two_consecutive_frames_from_dir(
+    frame_dir: Path,
+    n_frames: int,
+    transform: T.Compose,
+) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    """Load two random consecutive JPEG frames from a VideoFolder directory.
+
+    Explorer HPC SSv2 format: each video is a directory of JPEG frames named
+    000001.jpg, 000002.jpg, ... (6-digit zero-padded, 1-indexed).
+
+    Args:
+        frame_dir: Directory containing {NNNNNN}.jpg frame files.
+        n_frames:  Total frame count as declared in the annotation file.
+        transform: Image preprocessing transform (resize + normalize).
+
+    Returns:
+        (frame_c, frame_t) tensors each [1, C, H, W], or None on failure.
+    """
+    try:
+        from PIL import Image
+        if n_frames < 2:
+            return None
+        # Sample random consecutive pair (1-indexed frames)
+        t = random.randint(1, n_frames - 1)  # t and t+1, both valid
+        fc_path = frame_dir / f"{t:06d}.jpg"
+        ft_path = frame_dir / f"{t + 1:06d}.jpg"
+        if not fc_path.exists() or not ft_path.exists():
+            # Fall back: list actual files and pick pair
+            jpgs = sorted(frame_dir.glob("*.jpg"))
+            if len(jpgs) < 2:
+                return None
+            idx = random.randint(0, len(jpgs) - 2)
+            fc_path, ft_path = jpgs[idx], jpgs[idx + 1]
+        img_c = Image.open(fc_path).convert("RGB")
+        img_t = Image.open(ft_path).convert("RGB")
+        return transform(img_c).unsqueeze(0), transform(img_t).unsqueeze(0)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Annotation parsers (JSON and VideoFolder formats)
+# ---------------------------------------------------------------------------
+
+def load_annotations_json(
+    label_file: str,
+    annotation_file: str,
+) -> Tuple[Dict[str, int], List[Dict]]:
+    """Load SSv2 annotations from the standard JSON format.
+
+    label_file:      {"action template": label_int, ...}
+    annotation_file: [{"id": str, "template": str, ...}, ...]
+    """
+    with open(label_file) as f:
+        label_map: Dict[str, int] = json.load(f)
+    with open(annotation_file) as f:
+        annotations: List[Dict] = json.load(f)
+    return label_map, annotations
+
+
+def load_annotations_videofolder(
+    base_dir: str,
+    annotation_file: str,
+) -> Tuple[Dict[str, int], List[Dict]]:
+    """Load SSv2 annotations from the VideoFolder format used on Explorer HPC.
+
+    Explorer HPC path: /datasets/something_v2/
+      category.txt          — one class name per line (index = line number, 0-based)
+      train_videofolder.txt — "{rel_path} {n_frames} {label_idx}" per line
+      val_videofolder.txt   — same format
+
+    Returns:
+        label_map:   {"class name": label_int, ...}  (174 entries)
+        annotations: [{"id": str, "n_frames": int, "label": int}, ...]
+    """
+    base = Path(base_dir)
+    category_path = base / "category.txt"
+
+    # Build label map from category.txt (0-indexed, one class per line)
+    with open(category_path) as f:
+        classes = [line.strip() for line in f if line.strip()]
+    label_map = {name: idx for idx, name in enumerate(classes)}
+
+    # Parse annotation file: "{rel_path} {n_frames} {label_idx}"
+    annotations = []
+    with open(annotation_file) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 3:
+                continue
+            rel_path, n_frames_str, label_str = parts[0], parts[1], parts[2]
+            clip_id = rel_path.rstrip("/").split("/")[-1]  # e.g. "78687"
+            annotations.append({
+                "id": clip_id,
+                "rel_path": rel_path,
+                "n_frames": int(n_frames_str),
+                "label": int(label_str),
+            })
+
+    return label_map, annotations
 
 
 # ---------------------------------------------------------------------------
@@ -244,17 +331,29 @@ def load_two_consecutive_frames(
 
 def main():
     parser = argparse.ArgumentParser(description="Pre-extract V-JEPA 2.1 features for SSv2")
-    parser.add_argument("--video_dir", required=True, help="Directory with SSv2 video clips")
-    parser.add_argument("--label_file", required=True, help="SSv2 labels JSON file")
-    parser.add_argument("--annotation_file", required=True, help="SSv2 train annotation JSON")
+    parser.add_argument("--video_dir", required=True,
+                        help="Directory with SSv2 video clips (VideoFolder: parent of 20bn-something-something-v2/)")
+    parser.add_argument("--label_file", required=True,
+                        help="SSv2 labels: JSON file (json format) or base_dir containing category.txt (videofolder)")
+    parser.add_argument("--annotation_file", required=True,
+                        help="SSv2 annotations: JSON file or train_videofolder.txt")
     parser.add_argument("--output_dir", required=True, help="Output directory for features")
-    parser.add_argument("--checkpoint", required=True, help="V-JEPA 2.1 ViT-G checkpoint (.pt)")
+    parser.add_argument("--checkpoint", required=True, help="V-JEPA 2.1 ViT-L checkpoint (.pt)")
     parser.add_argument("--n_clips", type=int, default=20000, help="Max clips to extract")
     parser.add_argument("--image_size", type=int, default=224, help="Frame resize target")
     parser.add_argument("--train_frac", type=float, default=0.8, help="Train fraction")
     parser.add_argument("--val_frac", type=float, default=0.1, help="Val fraction")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", default="cuda", help="Device: cuda or cpu")
+    parser.add_argument(
+        "--annotation_format",
+        default="json",
+        choices=["json", "videofolder"],
+        help=(
+            "Annotation format: 'json' (standard SSv2 JSON files) or "
+            "'videofolder' (Explorer HPC: category.txt + train_videofolder.txt)"
+        ),
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -265,22 +364,30 @@ def main():
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"[preextract] Using device: {device}")
+    print(f"[preextract] Annotation format: {args.annotation_format}")
 
-    # Load label mapping.
-    with open(args.label_file) as f:
-        label_map: Dict[str, int] = json.load(f)
-    # label_map: {"action text": index, ...}
-
-    # Load annotations.
-    with open(args.annotation_file) as f:
-        annotations: List[dict] = json.load(f)
-    # annotations: [{"id": str, "template": str, "label": str, ...}, ...]
-
-    print(f"[preextract] Found {len(annotations)} clips in annotation file.")
+    # ── Load annotations (format-dispatched) ─────────────────────────────────
+    if args.annotation_format == "videofolder":
+        # Explorer HPC: label_file is the dataset base dir (contains category.txt)
+        label_map, annotations = load_annotations_videofolder(
+            base_dir=args.label_file,
+            annotation_file=args.annotation_file,
+        )
+        print(f"[preextract] VideoFolder: {len(label_map)} classes, "
+              f"{len(annotations)} clips in annotation file.")
+    else:
+        # Standard SSv2 JSON format
+        label_map, annotations = load_annotations_json(
+            label_file=args.label_file,
+            annotation_file=args.annotation_file,
+        )
+        print(f"[preextract] JSON: {len(label_map)} classes, "
+              f"{len(annotations)} clips in annotation file.")
 
     # Shuffle and limit.
     random.shuffle(annotations)
     annotations = annotations[:args.n_clips]
+    print(f"[preextract] Extracting up to {len(annotations)} clips.")
 
     # Load V-JEPA 2.1 extractor.
     print(f"[preextract] Loading V-JEPA 2.1 from {args.checkpoint}...")
@@ -293,12 +400,19 @@ def main():
     failed = 0
 
     for ann in tqdm(annotations, desc="Extracting features"):
-        clip_id = ann["id"]
-        label_text = ann.get("template", ann.get("label", ""))
-        label = label_map.get(label_text, -1)
-        if label < 0:
-            failed += 1
-            continue
+        clip_id = str(ann["id"])
+
+        # ── Resolve label ─────────────────────────────────────────────────────
+        if args.annotation_format == "videofolder":
+            # VideoFolder annotations already have integer label index
+            label = ann["label"]
+        else:
+            # JSON format: label stored as action text, look up in label_map
+            label_text = ann.get("template", ann.get("label", ""))
+            label = label_map.get(label_text, -1)
+            if label < 0:
+                failed += 1
+                continue
 
         # Skip if already extracted.
         fc_path = output_dir / f"{clip_id}_fc.pt"
@@ -307,19 +421,36 @@ def main():
             success_clips.append({"clip_id": clip_id, "label": label})
             continue
 
-        # Find video file.
-        video_path = None
-        for ext in [".webm", ".mp4", ".avi"]:
-            candidate = Path(args.video_dir) / f"{clip_id}{ext}"
-            if candidate.exists():
-                video_path = str(candidate)
-                break
-        if video_path is None:
-            failed += 1
-            continue
+        # ── Load two consecutive frames (format-dispatched) ───────────────────
+        if args.annotation_format == "videofolder":
+            # VideoFolder: each clip is a directory of JPEG frames
+            # video_dir is the parent; rel_path is e.g. "20bn-something-something-v2/78687"
+            rel_path = ann.get("rel_path", f"20bn-something-something-v2/{clip_id}")
+            frame_dir = Path(args.video_dir) / rel_path
+            if not frame_dir.is_dir():
+                # Fallback: try video_dir/clip_id directly
+                frame_dir = Path(args.video_dir) / clip_id
+            if not frame_dir.is_dir():
+                failed += 1
+                continue
+            frames = load_two_consecutive_frames_from_dir(
+                frame_dir=frame_dir,
+                n_frames=ann.get("n_frames", 0),
+                transform=transform,
+            )
+        else:
+            # JSON format: clip is a video file (.webm/.mp4/.avi)
+            video_path = None
+            for ext in [".webm", ".mp4", ".avi"]:
+                candidate = Path(args.video_dir) / f"{clip_id}{ext}"
+                if candidate.exists():
+                    video_path = str(candidate)
+                    break
+            if video_path is None:
+                failed += 1
+                continue
+            frames = load_two_consecutive_frames(video_path, transform)
 
-        # Load two consecutive frames.
-        frames = load_two_consecutive_frames(video_path, transform)
         if frames is None:
             failed += 1
             continue
