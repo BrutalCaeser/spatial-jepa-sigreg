@@ -76,8 +76,23 @@ if [ -z "${WANDB_API_KEY:-}" ]; then
 fi
 
 # ── Activate environment ──────────────────────────────────────────────────────
-module purge
-module load cuda/12.1 2>/dev/null || module load cuda/11.8 2>/dev/null
+# Initialize module system if not already available (some nodes don't export it)
+if ! command -v module &>/dev/null; then
+    for _mod_init in \
+        /usr/share/Modules/init/bash \
+        /etc/profile.d/modules.sh \
+        /shared/EL9/explorer/Modules/init/bash \
+        /shared/centos7/Modules/init/bash; do
+        [ -f "${_mod_init}" ] && source "${_mod_init}" && break
+    done
+fi
+# Load CUDA if module system is available; conda provides CUDA runtime as fallback
+if command -v module &>/dev/null; then
+    module purge
+    module load cuda/12.1 2>/dev/null || module load cuda/11.8 2>/dev/null || true
+else
+    echo "[run] WARNING: module system not available on $(hostname). Using conda CUDA runtime."
+fi
 # Northeastern Discovery: EL9 conda path (centos7 fallback)
 CONDA_BASE="/shared/EL9/explorer/anaconda3/2024.06"
 [ -d "${CONDA_BASE}" ] || CONDA_BASE="/shared/centos7/anaconda3/2021.05"
