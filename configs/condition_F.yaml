@@ -25,7 +25,7 @@ condition:    "F"
 stop_grad:    false
 lambda_1:     0.0           # NO SIGReg
 lambda_2:     0.1           # L_info_dense only
-lambda_3:     0.0
+lambda_3:     0.01          # L_cov scale anchor — prevents L_info_dense divergence (FM4)
 use_dense_info: true
 weight_decay: 0.0           # RULE 5: Conditions A and F must have weight_decay=0
 lr_warmup:    true
