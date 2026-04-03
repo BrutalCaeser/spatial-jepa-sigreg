@@ -519,10 +519,17 @@ def main():
         )
 
     # Initialize W&B.
+    # Explorer HPC compute nodes have no outbound internet — use offline mode
+    # so W&B buffers logs locally. Sync manually after job: wandb sync <run_dir>
     wandb_run = None
     if not args.smoke_test and not args.no_wandb:
         try:
             import wandb
+            import os as _os
+            # Force offline mode on HPC (no internet on compute nodes).
+            # Override with WANDB_MODE=online if running on a node with internet.
+            if _os.environ.get("WANDB_MODE", "").lower() not in ("online", "run"):
+                _os.environ.setdefault("WANDB_MODE", "offline")
             condition = cfg.get("condition", "unknown")
             wandb_run = wandb.init(
                 project=args.wandb_project,

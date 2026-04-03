@@ -52,7 +52,12 @@ LOG_DIR="/scratch/${USER}/logs"
 
 mkdir -p "${OUTPUT_DIR}" "${LOG_DIR}"
 
-# ── W&B: load API key from secure file if not already in environment ──────────
+# ── W&B: offline mode on HPC (compute nodes have no outbound internet) ────────
+# Logs are buffered locally. After job completes, sync with:
+#   wandb sync /scratch/$USER/outputs/gap1/wandb/offline-run-*
+export WANDB_MODE="${WANDB_MODE:-offline}"
+echo "[run] WANDB_MODE=${WANDB_MODE}"
+
 if [ -z "${WANDB_API_KEY:-}" ]; then
     WANDB_KEY_FILE="${HOME}/.wandb_api_key"
     if [ -f "${WANDB_KEY_FILE}" ]; then
@@ -60,8 +65,7 @@ if [ -z "${WANDB_API_KEY:-}" ]; then
         echo "[run] Loaded WANDB_API_KEY from ${WANDB_KEY_FILE}"
     else
         echo "[run] WARNING: WANDB_API_KEY not set and ${WANDB_KEY_FILE} not found."
-        echo "[run]   Metrics will log to console only. Create ${WANDB_KEY_FILE} to enable W&B."
-        echo "[run]   File format: single line containing your API key from wandb.ai/settings"
+        echo "[run]   Set WANDB_API_KEY or create ${WANDB_KEY_FILE} for online sync."
     fi
 fi
 

@@ -87,11 +87,15 @@ class VJEPAFeatureExtractor(nn.Module):
         try:
             from app.vjepa_2_1.models import vision_transformer as vit_encoder_mod
             # V-JEPA 2.1 ViT-L: embed_dim=1024, with img_size=224 → 196 spatial patches
+            # V-JEPA 2.1 ViT-L checkpoint uses tubelet_size=2, num_frames=2
+            # (3D patch_embed.proj.weight shape: [1024, 3, 2, 16, 16]).
+            # We extract a single spatial frame by passing 2 identical frames
+            # and taking the mean of the resulting 2×196 tokens.
             encoder = vit_encoder_mod.vit_large(
                 patch_size=16,
                 img_size=(224, 224),
-                num_frames=1,
-                tubelet_size=1,
+                num_frames=2,
+                tubelet_size=2,
                 use_sdpa=True,
                 use_SiLU=False,
                 wide_SiLU=True,
@@ -134,24 +138,21 @@ class VJEPAFeatureExtractor(nn.Module):
     def extract_patches(self, frame: torch.Tensor) -> torch.Tensor:
         """Extract patch tokens from a single frame (224×224).
 
-        V-JEPA 2.1 ViT-L with img_size=224, patch_size=16, num_frames=1
-        produces exactly 196 patch tokens at 1024-dim.
-
-        The model returns a list of layer outputs (hierarchical_layers).
-        We take the LAST element which is the final encoder output.
+        V-JEPA 2.1 ViT-L checkpoint uses tubelet_size=2, num_frames=2
+        (patch_embed.proj.weight: [1024, 3, 2, 16, 16]).  We pass the same
+        frame duplicated across T=2 to satisfy the temporal dimension, then
+        average the two sets of 196 tokens → [196, 1024].
 
         Args:
-            frame: Preprocessed frame tensor, shape [1, 1, C, H, W] (video format)
-                   or [1, C, H, W] (image format). Will be reshaped as needed.
+            frame: Preprocessed frame tensor [1, C, H, W].
 
         Returns:
             Patch features, shape [196, 1024].
         """
-        # V-JEPA 2.1 expects video input: [B, C, T, H, W] or [B, T, C, H, W]
-        # For single-frame: unsqueeze time dim if needed
+        # Build 2-frame clip by duplicating the frame: [1, C, 2, H, W]
         if frame.dim() == 4:
-            # [1, C, H, W] → [1, C, 1, H, W]
-            frame = frame.unsqueeze(2)
+            # [1, C, H, W] → [1, C, 2, H, W]
+            frame = frame.unsqueeze(2).repeat(1, 1, 2, 1, 1)
 
         output = self.encoder(frame)
 
@@ -161,16 +162,18 @@ class VJEPAFeatureExtractor(nn.Module):
         else:
             tokens = output       # [1, N, D]
 
-        # tokens shape: [1, N, D] where N=196, D=1024
-        # V-JEPA 2.1 ViT-L does NOT prepend CLS token; pure patch tokens only.
-        # Strip CLS if accidentally present (N+1 case).
+        # With num_frames=2, tubelet_size=2: N = (2/2) * (224/16)^2 = 1 * 196 = 196
+        # So tokens should be [1, 196, 1024] — same as single-frame case.
         N = tokens.shape[1]
         if N == 197:
-            tokens = tokens[:, 1:, :]   # strip CLS → [1, 196, 1024]
+            tokens = tokens[:, 1:, :]   # strip CLS if present
+        elif N == 392:
+            # Two temporal tokens per spatial position — average them
+            tokens = tokens.reshape(1, 2, 196, tokens.shape[-1]).mean(dim=1)
         elif N != 196:
             raise ValueError(
-                f"Unexpected token count {N} from V-JEPA 2.1 ViT-L (224px). "
-                f"Expected 196. Check img_size and patch_size."
+                f"Unexpected token count {N} from V-JEPA 2.1 ViT-L (224px, T=2). "
+                f"Expected 196 or 392. Check img_size, patch_size, tubelet_size."
             )
 
         return tokens.squeeze(0).cpu()  # [196, 1024]
