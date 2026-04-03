@@ -88,12 +88,14 @@ def sigreg(
 ) -> torch.Tensor:
     """SIGReg: Sketched Isotropic Gaussian Regularizer.
 
-    Definition 3.2 (foundations.md):
+    Definition 3.2 (foundations.md), modified to test against N(0,1):
         1. Sample M unit vectors u^(m) uniformly on S^{d-1}
         2. Project: h^(m) = Z @ u^(m)  in R^K
-        3. Standardize: h_tilde^(m) = (h - mean) / (std + eps)
-        4. Epps-Pulley test statistic T^(m) via trapezoidal quadrature
-        5. Return (1/M) * sum_m T^(m)
+        3. Epps-Pulley test statistic T^(m) against N(0,1) via trapezoidal quadrature
+        4. Return (1/M) * sum_m T^(m)
+
+    No standardization: tests against N(0,1) directly, not "any Gaussian".
+    This ensures nonzero gradient at the collapsed state (see CHANGELOG Session 7).
 
     Args:
         Z:         Sample matrix, shape [K, d].
@@ -117,14 +119,23 @@ def sigreg(
     # Step 2: Project Z onto each unit vector.  h: [K, M]
     h = Z @ u.T  # [K, M]
 
-    # Step 3: Standardize each projection column independently.
-    mean = h.mean(dim=0, keepdim=True)       # [1, M]
-    std  = h.std(dim=0, keepdim=True)        # [1, M]
-    h_tilde = (h - mean) / (std + 1e-8)     # [K, M]  standardized
+    # NO standardization. We test against N(0,1) directly, not "any Gaussian".
+    #
+    # Why: Standardization (h - mean) / (std + eps) creates a gradient dead zone
+    # at collapse. When all K samples are identical, h_tilde = 0 for all k, and
+    # ∂T/∂h_tilde = 0 exactly (both sin_part=0 and centering cancellation).
+    # SIGReg reports nonzero loss but zero gradient — it cannot push apart
+    # collapsed representations.
+    #
+    # Without standardization, SIGReg tests "is P_h = N(0,1)?" instead of
+    # "is P_h some Gaussian?". By Cramér-Wold, SIGReg(Z) → 0 ⟺ P_Z → N(0,I).
+    # This simultaneously prevents collapse AND anchors scale (unit variance).
+    #
+    # See CHANGELOG.md Session 7 for full derivation of the gradient dead zone.
 
-    # Step 4–5: Apply EP test to each column and average.
+    # Step 3–4: Apply EP test to each raw projection column and average.
     T_stats = torch.stack([
-        _epps_pulley_1d(h_tilde[:, m], T_knots=T_knots, bandwidth=bandwidth)
+        _epps_pulley_1d(h[:, m], T_knots=T_knots, bandwidth=bandwidth)
         for m in range(M)
     ])  # [M]
 
@@ -224,7 +235,10 @@ def _ep_test_1d_scalar(
     T_knots: int = 17,
     bandwidth: float = 1.0,
 ) -> torch.Tensor:
-    """EP test on a 1D sample: standardize, then apply Epps-Pulley.
+    """EP test on a 1D sample against N(0,1): no standardization.
+
+    Tests raw values directly against N(0,1), ensuring nonzero gradient
+    at the collapsed state. See sigreg() docstring for rationale.
 
     Args:
         x: Raw 1D sample values, shape [K].
@@ -233,10 +247,7 @@ def _ep_test_1d_scalar(
         Scalar EP test statistic.
     """
     x = x.float()
-    mean = x.mean()
-    std  = x.std()
-    x_std = (x - mean) / (std + 1e-8)
-    return _epps_pulley_1d(x_std, T_knots=T_knots, bandwidth=bandwidth)
+    return _epps_pulley_1d(x, T_knots=T_knots, bandwidth=bandwidth)
 
 
 # ---------------------------------------------------------------------------

@@ -357,12 +357,114 @@ Then compute `Covₙ(z_hat_n, z_t_n)` using the normalised representations.
 
 ---
 
+## Session 7 — SIGReg Gradient Dead Zone (2026-04-03)
+
+### The Critical Discovery: SIGReg Has Exactly Zero Gradient at Collapse
+
+After normalising L_info_dense (Session 6) eliminated divergence, Condition E still collapsed:
+
+| step | erank | gnorm | pred | sig | info |
+|------|-------|-------|------|-----|------|
+| 500  | 3.77  | 0.227 | 0.004 | 0.004 | −0.90 |
+| 1000 | **1.01** | 0.454 | 0.002 | 0.006 | −0.88 |
+| 4500 | **1.04** | 0.069 | 0.0005 | 0.005 | −0.96 |
+
+Training was numerically healthy (gnorm < 1, loss bounded). But erank flatlined at ~1.0 from step 1000 through 4500+. SIGReg reported loss ≈ 0.005 (nonzero — it "detected" the problem) but had **zero effect on the optimizer**. Why?
+
+### Mathematical Proof
+
+The SIGReg forward pass at collapse (`sigreg.py` lines 83–131):
+
+1. Z has all K rows identical (vector v) → `h = Z @ u.T` has all rows identical
+2. `mean = h.mean(dim=0)` = same as any row → `h − mean = 0`
+3. `std = 0` → `h_tilde = 0 / (0 + 1e−8) = 0`  for all k, m
+4. EP test on all-zeros: `cos_part = cos(0) = 1`, `sin_part = sin(0) = 0`
+5. `diff_sq = (1 − exp(−t²/2))² + 0² > 0`  → **Forward: T > 0** ✓
+
+The SIGReg backward pass at collapse — **TWO independent zeros**:
+
+**Zero 1 — EP test gradient vanishes at h_tilde = 0:**
+```
+∂(diff_sq)/∂(h_tilde_k) = 2·(cos_part − φ₀)·∂(cos_part)/∂(h_tilde_k)
+                         + 2·sin_part·∂(sin_part)/∂(h_tilde_k)
+```
+At h_tilde = 0:
+- `∂cos_part/∂h_tilde_k = −(1/K)·t·sin(t·0) = 0`  (sin(0) = 0)
+- `sin_part = 0`  (so 0 × anything = 0)
+- **∂T/∂h_tilde = 0 exactly**
+
+**Zero 2 — Standardisation backward pass cancels all gradients:**
+```
+∂L/∂h_k = (1/(std+ε)) · [g_k − mean(g)]
+```
+At collapse, all h_k are identical → by symmetry, all g_k = ∂L/∂h_tilde_k are identical:
+- `g_k − mean(g) = g_k − g_k = 0`
+- **∂L/∂h = 0 exactly** (even if ∂L/∂h_tilde were nonzero)
+
+**Conclusion:** SIGReg's loss is nonzero (~0.005) but its gradient is **exactly zero** — not approximately, not numerically small, but mathematically zero. The optimizer receives no signal from SIGReg at the collapsed state. The collapsed state is a **stable fixed point** of SIGReg-regularised training.
+
+**This explains why ALL conditions that use SIGReg (C, D1, D2, D3, E) collapsed.** The SIGReg gradient dead zone is the root cause of every collapse observed across the entire experiment.
+
+### The Fix: Remove Standardisation from SIGReg
+
+**Change to `models/sigreg.py`:**
+
+Removed lines 120–123 (the standardisation step) from the `sigreg()` function. Raw projections `h = Z @ u.T` now pass directly to the EP test, which tests against N(0,1) instead of "any Gaussian after standardising".
+
+Also removed standardisation from `_ep_test_1d_scalar()` (used by `sigreg_channel` for Condition D2).
+
+**Why this fixes the gradient dead zone:**
+
+Without standardisation, at collapse with Z → constant vector v:
+- `h[k,m] = v·u_m` (constant c_m per projection, but c_m ≠ 0 in general)
+- `sin_part(t) = sin(t·c_m) ≠ 0`
+- The product `sin_part · ∂sin_part/∂h_k` is **nonzero**
+- No centering in the backward pass to cancel gradients
+
+The gradient lives. SIGReg can now push representations away from collapse.
+
+**What changes mathematically:**
+
+| Property | Before (standardised) | After (un-standardised) |
+|----------|----------------------|------------------------|
+| Tests against | "Any Gaussian N(μ,σ²)" | "Specifically N(0,1)" |
+| Collapse gradient | **Exactly zero** | Nonzero (proportional to deviation) |
+| Scale sensitivity | None (scale-invariant) | Yes (pushes toward unit variance) |
+| Cramér-Wold target | P_Z → N(μ,Σ) for some μ,Σ | P_Z → N(0,I) specifically |
+
+The un-standardised SIGReg simultaneously:
+1. **Prevents collapse** — nonzero gradient pushes collapsed samples apart
+2. **Anchors scale** — pushes toward unit variance in all projection directions
+3. **Tests Gaussianity** — EP test still measures distributional shape
+
+By Cramér-Wold theorem: if all 1D projections follow N(0,1), the multivariate distribution is N(0,I). Un-standardised SIGReg pushes the full adapter output distribution toward isotropic unit Gaussian.
+
+**Bonus:** L_cov (lambda_3) is no longer needed. SIGReg now provides its own scale anchoring. lambda_3 reverts to 0.0 for both E and F.
+
+### Files Changed
+- `models/sigreg.py` — Removed standardisation from `sigreg()` and `_ep_test_1d_scalar()`
+- `configs/condition_E.yaml` — lambda_3 confirmed at 0.0
+- `configs/condition_F.yaml` — lambda_3 confirmed at 0.0
+
+### Jobs to Resubmit (All SIGReg Conditions)
+
+| Condition | Why resubmit | Fresh or resume? |
+|-----------|-------------|------------------|
+| C  | SIGReg gradient was dead; prior run at step 39k was invalid | Fresh (new SIGReg behavior) |
+| D1 | SIGReg gradient was dead; collapsed to erank=1.05 | Fresh |
+| D2 | SIGReg gradient was dead + prior `module` bug | Fresh |
+| D3 | SIGReg gradient was dead; prior run collapsed to erank=1.18 | Fresh |
+| E  | SIGReg gradient was dead + L_info normalisation | Fresh |
+| F  | L_info normalisation (no SIGReg, but needs clean run) | Fresh |
+
+Conditions A and B are NOT affected (lambda_1=0, no SIGReg). Their completed results remain valid.
+
+---
+
 ## Pending
 
-- Cancel active E and F jobs (still running with broken lambda_3=1.0 config)
-- Implement normalised L_info_dense in `models/losses.py`
-- Update `foundations.md` Definition 3.5 to document the normalisation
-- Resubmit E and F with lambda_3=0.0 and normalised L_info_dense
-- Resubmit C, D3 (resume from step 30k), D2 (module fix)
-- D1 (5623893) still running, collapsed (erank=1.05) — valid result for per-token SIGReg axis
-- W&B sync, linear probes, and analysis after all conditions complete
+- Commit SIGReg fix, push to GitHub, pull on HPC
+- Run unit tests to verify SIGReg fix doesn't break existing tests
+- Resubmit all 6 conditions (C, D1, D2, D3, E, F) as fresh runs
+- W&B sync daemon still running on login node (PID active)
+- After all 8 conditions complete: linear probes, analysis scripts, W&B dashboard
