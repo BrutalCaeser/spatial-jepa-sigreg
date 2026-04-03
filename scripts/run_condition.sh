@@ -8,7 +8,7 @@
 #SBATCH --output=/scratch/%u/logs/gap1_cond_%x_%j.out
 #SBATCH --error=/scratch/%u/logs/gap1_cond_%x_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=${USER}@northeastern.edu
+#SBATCH --mail-user=gupta.yashv@northeastern.edu
 
 # =============================================================================
 # GAP 1 Single Condition Runner
