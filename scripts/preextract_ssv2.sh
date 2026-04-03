@@ -39,6 +39,10 @@ echo "GPU:      $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null 
 echo "Start:    $(date)"
 echo "=========================================="
 
+# ── Resolve username (USER may be unbound on some SLURM nodes) ───────────────
+USER="${USER:-${SLURM_JOB_USER:-$(whoami)}}"
+export USER
+
 # ── Paths ────────────────────────────────────────────────────────────────────
 # SSv2 is available read-only on Explorer at /datasets/something_v2/
 SSV2_BASE="/datasets/something_v2"
