@@ -148,9 +148,37 @@ Format: `[Date] — Description (files affected)`
 
 ---
 
+## Session 4 — L_info Divergence Fixes (2026-04-03)
+
+### Condition E — L_info_dense Divergence (job 5619944, CANCELLED)
+- **Symptom:** loss went from -0.05 → -65,677 in 1000 steps; gnorm peaked at 13,487; erank collapsed to 1.07
+- **Root cause:** `L_info_dense` maximizes cross-covariance between `z_hat` and `z_t`. With no stop-gradient, both representations grow together (positive feedback): larger scale → larger cross-covariance → larger gradient → even larger scale. Unbounded below.
+- **Fix:** `configs/condition_E.yaml` — `lambda_3: 0.0 → 0.01`. L_cov = `||Cov(z_hat_pool) − I||_F²` penalizes both scale explosion (Cov → ∞) and collapse (Cov → 0), anchoring the representation scale throughout training.
+- **Commit:** `7282bef` — resubmitted as job 5621390
+
+### Condition F — L_info_dense Divergence, Worse (job 5621084, CANCELLED)
+- **Symptom:** loss -124M, gnorm peaked at 281M by step 7000; erank=1.00 (collapsed AND exploding simultaneously)
+- **Root cause:** Same as E. Worse because F has no SIGReg and `weight_decay=0` — no counterforce at all. The adapter collapsed to a single direction whose magnitude grew without bound under L_info.
+- **Fix:** `configs/condition_F.yaml` — `lambda_3: 0.0 → 0.01`. Experimental purpose preserved: L_cov prevents scale explosion but not erank collapse, so F can still confirm SIGReg is necessary.
+- **Commit:** `48086fd` — resubmitted as job 5621563
+
+### W&B Cleanup
+- Deleted synthetic data runs (`ucuzhbqp` = old Cond B, `n7sxz4pn` = old Cond A) from W&B dashboard manually
+- Both were from early pipeline validation on synthetic features, not real experimental results
+
+### Conditions Submitted (Real SSv2, Fixed Configs)
+- **gap1-C** → Job 5621085 (RUNNING on d1007)
+- **gap1-D3** → Job 5619943 (RUNNING on d1017)
+- **gap1-E (fixed)** → Job 5621390 (PENDING)
+- **gap1-F (fixed)** → Job 5621563 (PENDING)
+- **gap1-D1, gap1-D2** → Auto-submitter (PID 2381220) queuing as slots open
+
+---
+
 ## Pending
 
-- Conditions D3, E, F, C, D1, D2 on real SSv2 (in queue / auto-submitting)
+- Conditions E, F, C, D1, D2 completing training on real SSv2
+- Monitor D3 — showing early collapse (erank=1.13 at step 1000 despite SIGReg); may be actual finding
 - W&B offline sync after all conditions complete:
   `wandb sync /scratch/gupta.yashv/gap1-experiment/wandb/offline-run-*`
 - Linear probe evaluation after training
