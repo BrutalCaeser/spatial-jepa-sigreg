@@ -233,12 +233,136 @@ L_cov dominates from effectively step 1 (representations are always at scale >> 
 - gap1-D3 (resume from step 30k checkpoint)
 - gap1-C (resume from step 30k checkpoint)
 
+### Infrastructure Fix: `module: command not found` on SLURM Nodes
+- **Error:** `line 79: module: command not found` (exit 127) on d1020 and other nodes
+- **Affected jobs:** F (5647044), D2 (5647046), D3-resume (5647047), C-resume (5647048) — all failed within seconds
+- **Root cause:** Some nodes don't initialize the `module` command in SLURM's non-login shell. Under `set -euo pipefail`, `module purge` failing with exit 127 kills the script immediately.
+- **Fix:** `scripts/run_condition.sh` — guard `module` behind `command -v` check, try to source init from known paths, fallback to conda CUDA runtime.
+- **Commit:** `ebe59ed`
+
+---
+
+## Session 6 — lambda_3=1.0 Failed; L_info_dense Design Flaw Identified (2026-04-03)
+
+### Observation: E Collapsed Despite lambda_3=1.0
+
+**Job 5646981 (Condition E, lambda_3=1.0):**
+
+| step | erank | loss | pred | sig | info | L_cov (inferred) |
+|------|-------|------|------|-----|------|-------------------|
+| 500  | 5.14  | 244.0 | 0.08 | 0.005 | −0.17 | ~244 |
+| 1000 | **1.03** | 244.2 | 0.11 | 0.006 | −1.56 | ~246 |
+| 1500 | 1.10  | 195.6 | 3.51 | 0.007 | −543  | divergence begins |
+
+E collapsed by step 1000 — the same outcome as Conditions A, B, D1, D3 (the baseline failures). **This is the proposed method. It should not collapse.**
+
+### Observation: F Still Diverging Despite lambda_3=1.0
+
+**Job 5649013 (Condition F, lambda_3=1.0):**
+
+| step | erank | xcov | gnorm |
+|------|-------|------|-------|
+| 500  | 6.09  | 0.66 | 157 |
+| 1000 | 1.05  | 2.87 | 68 |
+| 1500 | 1.03  | 174 | 280 |
+| 2000 | 1.08  | 180,141 | 15,038 |
+| 5000 | 1.09  | 8.5M | — |
+| 10000| 1.00  | 82.8M | — |
+
+F collapsed by step 1000 (expected), then immediately resumed diverging: xcov grew from 2.87 to 82 million. gnorm reached hundreds of millions. **lambda_3=1.0 had zero effect on the divergence.**
+
+### Root Cause Analysis: Two Structural Flaws in L_cov
+
+**Flaw 1 — lambda_3=1.0 drowned out SIGReg (caused E to collapse):**
+
+At step 500, the loss breakdown for Condition E was:
+- L_cov contribution: **~244** (99.97% of total gradient signal)
+- SIGReg contribution: **0.005** (0.002% of total gradient signal)
+
+The optimizer was almost entirely minimizing L_cov and ignoring SIGReg. SIGReg — the mechanism specifically designed to prevent representational collapse — contributed 1/48,000th of the gradient. At this ratio, SIGReg cannot prevent collapse under any circumstances. **We turned up lambda_3 so high that it silenced the very mechanism that was supposed to keep representations alive.**
+
+**Flaw 2 — L_cov has zero gradient at the collapsed state (cannot anchor collapsed-state scale):**
+
+L_cov = `||Cov(ẑ_pool) − I||²_F` where `Cov = (1/B) · Z̄ᵀZ̄` and `Z̄` is the batch-centred predictor output.
+
+When the adapter collapses, all clips produce the same vector. After centring, Z̄ = 0. Therefore:
+- Cov = (1/B) · 0ᵀ · 0 = 0
+- L_cov = ||0 − I||²_F = d = 256 (a constant, independent of the collapsed vector's magnitude)
+- **∂L_cov/∂z = (4/B) · Z̄ · (C − I) = 0** because Z̄ = 0
+
+At the collapsed state, L_cov provides **no gradient at any scale**. Whether the collapsed constant has magnitude 0.001 or 10⁶, L_cov sees the same zero-centred data, computes the same Cov=0, and provides the same zero gradient. L_cov is a critical point at collapse — it cannot push the adapter out of collapse, and it cannot constrain the magnitude of a collapsed representation.
+
+This is why F diverges despite lambda_3=1.0: the adapter collapsed (step 1000), L_cov went silent, and L_info_dense was free to drive the collapsed constant's magnitude to infinity exactly as before.
+
+### Diagnosis: There Is No Valid Setting of lambda_3
+
+The two flaws create an impossible dilemma:
+
+| lambda_3 | Scale explosion? | SIGReg active? | Outcome |
+|----------|-----------------|----------------|---------|
+| 0.0      | ✗ Yes (unbounded L_info) | ✓ Yes | E diverges |
+| 0.01     | ✗ Yes (too weak)         | ✓ Mostly | E diverges (slowly) |
+| 1.0      | ✓ Pre-collapse only      | ✗ No (drowned) | E collapses, then F diverges |
+| any      | ✗ Post-collapse          | — | L_cov gradient = 0 at collapse |
+
+No setting of lambda_3 solves both problems simultaneously. The approach of using L_cov on `ẑ` as a scale anchor for L_info_dense is fundamentally flawed.
+
+### True Root Cause: L_info_dense Is Unbounded Under No-Stop-Gradient
+
+The core problem is not lambda_3. It is L_info_dense itself:
+
+```
+L_info_dense = −(1/N) Σₙ Tr(Covₙ(ẑ, z_t))
+```
+
+Without stop-gradient, both `ẑ` and `z_t` share the adapter's parameters θ. The cross-covariance `Tr(Covₙ)` scales as s² with representation magnitude s. The optimizer can always reduce the loss by making representations bigger — there is no natural minimum. This is not a hyperparameter problem; it is a mathematical property of the loss function:
+
+- **Scale invariance gap:** L_info_dense rewards magnitude increases. An adapter that outputs representations at scale 10× has cross-covariance 100× larger (more negative loss).
+- **No self-limiting mechanism:** Unlike L_pred (which has a natural minimum at zero), L_info_dense has no floor — it is unbounded below.
+- **Collapse-divergence coupling:** Without SIGReg (or with SIGReg drowned out), the adapter collapses, making z_t a constant. L_info_dense then drives the magnitude of this constant to infinity.
+
+### Corrective Action: Normalize Inputs to L_info_dense
+
+**Change to `models/losses.py`, function `l_info_dense`:**
+
+Before computing cross-covariance, L2-normalize `ẑ` and `z_t` per token:
+
+```python
+z_hat_n = F.normalize(z_hat, dim=-1)  # unit norm per token
+z_t_n   = F.normalize(z_t, dim=-1)    # unit norm per token
+```
+
+Then compute `Covₙ(z_hat_n, z_t_n)` using the normalised representations.
+
+**Why this works:**
+- L_info_dense is now bounded in `[−d, 0]` regardless of representation scale
+- The optimizer can only reduce L_info by aligning the *directions* of predicted and target representations, not by inflating their magnitude
+- No L_cov needed → lambda_3 reverts to 0.0
+- SIGReg operates freely at lambda_1=0.1 — no longer drowned by L_cov
+
+**Why this is safe:**
+- The *scientific question* is unchanged: does per-patch information alignment preserve spatial structure? Normalised cross-covariance still measures per-patch alignment — it just cannot be gamed by scale inflation.
+- SIGReg is unaffected — it operates on z_c (adapter output), not on the normalised L_info inputs.
+- Conditions A, B, C, D1, D2, D3 are unaffected — they do not use L_info_dense (lambda_2=0).
+- Only Conditions E and F use L_info_dense. Their prior runs are all invalid anyway (divergence or collapse caused by the L_cov attempts).
+
+**What this changes:**
+- Definition 3.5 in `foundations.md` is modified: L_info_dense now uses normalised representations.
+- This must be documented transparently in the paper.
+- All prior E and F jobs are discarded. Fresh runs with the normalised L_info_dense.
+
+### Updated lambda_3 Settings
+- `configs/condition_E.yaml` — `lambda_3: 1.0 → 0.0` (L_cov no longer needed)
+- `configs/condition_F.yaml` — `lambda_3: 1.0 → 0.0` (L_cov no longer needed)
+
 ---
 
 ## Pending
 
-- All 8 conditions completing or re-running
-- D1 (5623893) — at step 5k, erank=1.05, monitoring for collapse/recovery
-- W&B sync after all conditions complete
-- Linear probe evaluation
-- Analysis: `analysis/plot_erank_curves.py`, `analysis/results_table.py`
+- Cancel active E and F jobs (still running with broken lambda_3=1.0 config)
+- Implement normalised L_info_dense in `models/losses.py`
+- Update `foundations.md` Definition 3.5 to document the normalisation
+- Resubmit E and F with lambda_3=0.0 and normalised L_info_dense
+- Resubmit C, D3 (resume from step 30k), D2 (module fix)
+- D1 (5623893) still running, collapsed (erank=1.05) — valid result for per-token SIGReg axis
+- W&B sync, linear probes, and analysis after all conditions complete
