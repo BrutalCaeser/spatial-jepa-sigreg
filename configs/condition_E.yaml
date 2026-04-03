@@ -31,7 +31,7 @@ condition:    "E"
 stop_grad:    false
 lambda_1:     0.1           # SIGReg weight
 lambda_2:     0.1           # L_info_dense weight
-lambda_3:     1.0           # L_cov scale anchor — must dominate L_info from step 1 (FM4)
+lambda_3:     0.0           # L_cov disabled — L_info_dense now normalised (scale-invariant)
 sigreg_axis:  "global"
 use_dense_info: true        # Use L_info_dense (per-patch), not L_info_pooled
 weight_decay: 0.01

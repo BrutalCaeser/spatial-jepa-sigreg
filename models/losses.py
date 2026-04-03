@@ -51,17 +51,26 @@ def l_pred(z_hat: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
 def l_info_dense(z_hat: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
     """Dense cross-covariance information loss (preserves spatial structure).
 
-    Definition 3.5 (foundations.md):
+    Definition 3.5 (foundations.md), with per-token L2 normalisation:
+
         For each patch position n in {0, ..., N-1}:
+            Normalise per token:
+                z_hat_n[b,n,:] = z_hat[b,n,:] / ||z_hat[b,n,:]||_2
+                z_t_n[b,n,:]   = z_t[b,n,:]   / ||z_t[b,n,:]||_2
             Center per patch:
-                z_hat_c[b,n,:] = z_hat[b,n,:] - mean_b(z_hat[:,n,:])
-                z_t_c[b,n,:]   = z_t[b,n,:]   - mean_b(z_t[:,n,:])
+                z_hat_c[b,n,:] = z_hat_n[b,n,:] - mean_b(z_hat_n[:,n,:])
+                z_t_c[b,n,:]   = z_t_n[b,n,:]   - mean_b(z_t_n[:,n,:])
             C_n = (1/B) * z_hat_c[:,n,:]^T @ z_t_c[:,n,:]   in R^{d x d}
 
         L_info_dense = -(1/N) * sum_n Tr(C_n)
 
-    Computes cross-covariance AT EACH SPATIAL POSITION independently, preserving
-    per-patch alignment. Negative sign: minimizing loss = maximizing Tr(C).
+    Per-token normalisation makes L_info_dense bounded in [-1, 0] per patch
+    (and [-1, 0] overall), eliminating the scale-explosion instability that
+    occurs when both z_hat and z_t grow without bound under no-stop-gradient.
+    The optimizer can only reduce this loss by aligning the *directions* of
+    predicted and target representations, not by inflating their magnitude.
+
+    See CHANGELOG Session 6 for full analysis of why normalisation is necessary.
 
     Rule 2: z_hat MUST have gradient (it is always the predictor output).
 
@@ -70,13 +79,17 @@ def l_info_dense(z_hat: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
         z_t:   Target adapter output, shape [B, N, d].
 
     Returns:
-        Scalar loss <= 0 (more negative = better alignment).
+        Scalar loss in [-1, 0] (more negative = better directional alignment).
     """
     B, N, d = z_hat.shape
 
+    # L2-normalise per token to make loss scale-invariant.
+    z_hat_n = F.normalize(z_hat, dim=-1)  # [B, N, d], unit norm per token
+    z_t_n   = F.normalize(z_t,   dim=-1)  # [B, N, d], unit norm per token
+
     # Center each patch token across the batch dimension independently.
-    z_hat_c = z_hat - z_hat.mean(dim=0, keepdim=True)  # [B, N, d]
-    z_t_c   = z_t   - z_t.mean(dim=0, keepdim=True)    # [B, N, d]
+    z_hat_c = z_hat_n - z_hat_n.mean(dim=0, keepdim=True)  # [B, N, d]
+    z_t_c   = z_t_n   - z_t_n.mean(dim=0, keepdim=True)    # [B, N, d]
 
     # Cross-covariance trace summed across patch positions.
     # C_n[i,j] = (1/B) * sum_b z_hat_c[b,n,i] * z_t_c[b,n,j]
