@@ -49,13 +49,23 @@ conda activate gap1
 
 echo "[dl] Python: $(python --version)"
 
-# Force-install correct version of datasets (verify load_dataset is importable)
-python -c "from datasets import load_dataset" 2>/dev/null || {
-    echo "[dl] Installing/upgrading HuggingFace datasets library..."
-    pip install "datasets>=2.18.0" --upgrade -q
-}
-# Verify
-python -c "from datasets import load_dataset; import importlib.metadata; print('datasets:', importlib.metadata.version('datasets'))"
+# The vjepa2 repo (pip install -e) adds vjepa2/src to sys.path which contains
+# a src/datasets/ namespace dir that shadows the HuggingFace datasets package.
+# Verify we can import HuggingFace datasets without that path conflict.
+python - << 'PYEOF'
+import sys
+sys.path = [p for p in sys.path if "/vjepa2/src" not in p]
+try:
+    from datasets import load_dataset
+    import importlib.metadata
+    print(f"[dl] datasets OK: {importlib.metadata.version('datasets')}")
+except ImportError:
+    import subprocess, sys
+    print("[dl] Installing HuggingFace datasets...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "datasets>=2.18.0", "-q"])
+    from datasets import load_dataset
+    print("[dl] datasets installed OK")
+PYEOF
 
 # ── Run download ─────────────────────────────────────────────────────────────
 cd "${PROJECT_DIR}"

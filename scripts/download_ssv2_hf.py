@@ -31,6 +31,17 @@ import shutil
 import sys
 from pathlib import Path
 
+# ── CRITICAL: Remove vjepa2/src from sys.path before importing 'datasets' ───
+# The vjepa2 repo has a src/datasets/ namespace directory that shadows the
+# HuggingFace datasets package when installed with `pip install -e vjepa2`.
+_VJEPA_SRC = str(Path(os.environ.get("USER", ""), "vjepa2", "src"))
+_sys_path_clean = [
+    p for p in sys.path
+    if not (p.endswith("/vjepa2/src") or "/vjepa2/src" in p)
+]
+if len(_sys_path_clean) < len(sys.path):
+    sys.path = _sys_path_clean
+
 from tqdm import tqdm
 
 
