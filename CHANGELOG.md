@@ -175,11 +175,70 @@ Format: `[Date] — Description (files affected)`
 
 ---
 
+## Session 5 — lambda_3 Escalation + Resume Fixes (2026-04-03, continued)
+
+### Root Cause: lambda_3=0.01 Was Insufficient
+
+**Analysis:** At representation scale `s`, the L_cov gradient ∝ `lambda_3 * d² * s³` while the L_info gradient ∝ `lambda_2 * N * d * s`. L_cov only dominates when:
+
+```
+s² > (lambda_2 * N) / (lambda_3 * d)
+   = (0.1 × 196) / (0.01 × 256) = 7.66  →  s > 2.77
+```
+
+With `lambda_3=0.01`, L_cov doesn't kick in until representations are already at scale ~3. Gradient clipping (max_norm=1.0) then means every step makes a tiny net push toward larger scale. Over 35k steps this compounded to gnorm=1.28 BILLION in job 5621390.
+
+**Fix:** `lambda_3: 0.01 → 1.0` in both E and F. With `lambda_3=1.0`:
+
+```
+s² > (0.1 × 196) / (1.0 × 256) = 0.076  →  s > 0.28
+```
+
+L_cov dominates from effectively step 1 (representations are always at scale >> 0.28 after random init). This anchors the covariance to identity before divergence can begin.
+
+- `configs/condition_E.yaml` — `lambda_3: 0.01 → 1.0`
+- `configs/condition_F.yaml` — `lambda_3: 0.01 → 1.0`
+
+### Condition E Job History
+- 5619944 — CANCELLED (diverged, no L_cov)
+- 5621390 — CANCELLED (diverged, lambda_3=0.01 too small — was already running with old config before pull)
+- New job submitted with lambda_3=1.0 (see below)
+
+### Condition F Job History
+- 5621084 — CANCELLED (diverged, no L_cov)
+- 5621563 — COMPLETED but invalid (all 50k steps diverged; gnorm=1.4B at step 50k; probe=1.0% ≈ chance)
+- New job submitted with lambda_3=1.0 (see below)
+
+### Infrastructure Fix: HOME unbound variable (D2 failure)
+- **Error:** `HOME: unbound variable` in job 5626265 (D2, node d1020)
+- **Root cause:** `set -euo pipefail` + some nodes don't export HOME to job environment
+- **Fix:** `scripts/run_condition.sh` — added `HOME="${HOME:-/home/${USER}}"` after USER guard
+- **Commit:** `f88800e`
+
+### Timeout Recoveries (D3 and C)
+- D3 (5619943) and C (5621085) both hit the 8h SLURM wall at step ~39k/50k
+- Checkpoints saved at steps 10k, 20k, 30k by trainer
+- Resubmitted with `--resume /scratch/gupta.yashv/outputs/gap1/{D3,C}/checkpoint_step030000.pt`
+- Only 20k steps needed to complete
+
+### D3 Finding — Global SIGReg Blind to Within-Sample Patch Collapse
+- erank collapsed to 1.1 by step 1000 despite SIGReg, then flatlined through step 39.5k
+- **Root cause:** Global SIGReg operates on `z_c.mean(dim=1)` (pooled). If all 196 patches within a clip collapse to the same vector, the pool is still that vector. SIGReg then tests only whether DIFFERENT CLIPS produce different pooled outputs — it cannot detect within-sample patch collapse.
+- **Implication:** D3 protects cross-sample diversity but allows within-sample spatial collapse. erank metric (computed on [K×196, d] matrix) correctly captures this as a failure. Confirms L_info_dense (Condition E) is necessary to maintain per-patch spatial structure.
+
+### Jobs Resubmitted
+- gap1-E (lambda_3=1.0, fresh start)
+- gap1-F (lambda_3=1.0, fresh start)
+- gap1-D2 (HOME fix applied, fresh start)
+- gap1-D3 (resume from step 30k checkpoint)
+- gap1-C (resume from step 30k checkpoint)
+
+---
+
 ## Pending
 
-- Conditions E, F, C, D1, D2 completing training on real SSv2
-- Monitor D3 — showing early collapse (erank=1.13 at step 1000 despite SIGReg); may be actual finding
-- W&B offline sync after all conditions complete:
-  `wandb sync /scratch/gupta.yashv/gap1-experiment/wandb/offline-run-*`
-- Linear probe evaluation after training
-- Analysis scripts: `analysis/plot_erank_curves.py`, `analysis/results_table.py`
+- All 8 conditions completing or re-running
+- D1 (5623893) — at step 5k, erank=1.05, monitoring for collapse/recovery
+- W&B sync after all conditions complete
+- Linear probe evaluation
+- Analysis: `analysis/plot_erank_curves.py`, `analysis/results_table.py`
