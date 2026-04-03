@@ -192,8 +192,10 @@ def main():
         )
 
         # Save in format expected by SSv2FeatureDataset
-        torch.save(torch.from_numpy(f_c), out_dir / f"{clip_id}_fc.pt")
-        torch.save(torch.from_numpy(f_t), out_dir / f"{clip_id}_ft.pt")
+        # Use torch.tensor() instead of torch.from_numpy() to avoid numpy
+        # version conflicts between scipy/conda numpy and torch's numpy.
+        torch.save(torch.tensor(f_c, dtype=torch.float32), out_dir / f"{clip_id}_fc.pt")
+        torch.save(torch.tensor(f_t, dtype=torch.float32), out_dir / f"{clip_id}_ft.pt")
 
         index[split].append({"clip_id": clip_id, "label": int(label)})
 
