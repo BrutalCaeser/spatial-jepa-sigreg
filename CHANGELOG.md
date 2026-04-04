@@ -697,16 +697,72 @@ finding suitable for the paper.
 - `training/trainer.py` — BN module creation, init_gain passthrough
 - `CHANGELOG.md` — this entry
 
+### Path 1: Stop-Gradient + SIGReg (lambda=1.0, batch=128) — FAILED
+
+**Hypothesis:** Stop-grad breaks the direct collapse pathway. With the direct
+force removed, SIGReg at lambda=1.0 should dominate the weak indirect collapse
+force and prevent collapse.
+
+**Jobs:** 5660181 (stop_grad=True), 5660182 (stop_grad=False, control)
+
+**Result: BOTH COLLAPSED by step 400.** But with critically different dynamics:
+
+**p1-nosg (no stop-grad):** Classic pattern. SIGReg stuck at 0.204 (ignored),
+L_pred → 0, gnorm → 0. Silent collapse.
+
+| Step | L_pred | SIGReg | erank | gnorm |
+|------|--------|--------|-------|-------|
+| 200  | 0.007  | 0.204  | 5.70  | 0.048 |
+| 400  | 0.003  | 0.204  | 1.13  | 0.016 |
+| 600  | 0.001  | 0.204  | 1.07  | 0.010 |
+
+**p1-sg (stop-grad):** Phase transition at step 250–300. SIGReg DROPS sharply
+(0.19→0.06), L_pred SPIKES (0.04→0.86), erank crashes (5.9→1.1).
+
+| Step | L_pred | SIGReg | erank | gnorm |
+|------|--------|--------|-------|-------|
+| 200  | 0.019  | 0.201  | 5.91  | 0.040 |
+| 300  | 0.857  | 0.057  | ~1    | 0.745 |
+| 400  | 0.604  | 0.043  | 1.08  | 0.501 |
+| 600  | 0.348  | 0.036  | 1.13  | 0.450 |
+
+**Critical finding:** With stop-grad, SIGReg is not just failing to prevent
+collapse — it is **actively driving the collapse**. The optimizer finds that
+the 1D Gaussian configuration (erank≈1, SIGReg≈0.04) has lower SIGReg than
+the initial 5D configuration (erank≈6, SIGReg≈0.20). SIGReg's gradient
+points TOWARD the 1D local minimum, not away from it.
+
+The L_pred spike (0.04→0.86) at step 300 is the adapter restructuring to
+satisfy SIGReg. The predictor, trained on the old representation, suddenly
+faces a collapsed input and produces large errors. It then re-learns the
+collapsed representation (L_pred recovers from 0.86→0.35 by step 600).
+
+**Conclusion: The 1D variance trick is the fundamental, insurmountable blocker
+for SIGReg.** Stop-grad, high lambda, batch size, init gain, BN — none address
+it because the problem is in the SIGReg loss landscape itself. The EP test on
+random projections has spurious local minima at low-dimensional distributions.
+
+### Summary of All Attempts (Session 8)
+
+| Attempt | What we tried | Result | Why it failed |
+|---------|--------------|--------|---------------|
+| Lambda sweep (global) | lambda=10/25/50, B=32 | Collapsed | 1D variance trick (SIGReg↓ while erank↓) |
+| Lambda sweep (token) | lambda=10, K=6272 | Collapsed | Same trick at larger K |
+| Diag-B | B=128, gain=0.1, no BN | Collapsed | SIGReg ignored (too weak vs L_pred) |
+| Diag-C | B=128, gain=1.0, no BN | Collapsed | Collapse = convergence to 1D Gaussian |
+| Diag-D | B=128, gain=1.0, BN | Collapsed | BN masks collapse from SIGReg |
+| Path 1 (sg) | stop_grad + lambda=1.0, B=128 | Collapsed | SIGReg DRIVES collapse to 1D minimum |
+| Path 1 (nosg) | no stop_grad + lambda=1.0, B=128 | Collapsed | Classic: SIGReg ignored |
+
+**7 experiments, 0 successes.** SIGReg cannot prevent collapse in this setup.
+
 ---
 
 ## Pending
 
-- Diagnostic sweep complete (all 3 collapsed). Need to decide paper direction:
-  - Option 1: Frame as negative finding — "SIGReg alone cannot prevent collapse
-    in shared-weight adapter architectures"
-  - Option 2: Add stop-gradient to conditions that need collapse prevention,
-    keep SIGReg for distributional shaping (Gaussianity enforcement, not
-    collapse prevention). Rerun all 8 conditions accordingly.
-  - Option 3: Add EMA target encoder. SIGReg becomes supplementary.
+- **Path 2: Covariance regularisation as collapse barrier + SIGReg for Gaussianity.**
+  Replace SIGReg as the anti-collapse mechanism with ||Cov(z_pool) - I||_F²,
+  which has no 1D local minimum. Keep SIGReg for distributional shape enforcement.
 - Correct foundations.md Definition 2.3 (SIGReg is bounded, not infinite, at collapse)
-- After direction decided: resubmit all 8 conditions, linear probes, analysis, W&B
+- After collapse prevention works: resubmit all 8 conditions with revised losses
+- Linear probes, analysis scripts, W&B dashboard
