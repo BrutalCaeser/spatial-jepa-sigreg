@@ -164,10 +164,22 @@ class Trainer:
         self.adapter.to(self.device)
         self.predictor.to(self.device)
 
+        # Optional: BatchNorm for SIGReg input (LeWorldModel finding).
+        # BN normalises per-feature across the batch before SIGReg only.
+        # Metrics are computed on raw adapter output (no BN).
+        self.sigreg_bn = None
+        if self.loss_cfg.use_sigreg_bn:
+            d = cfg.get("d", 256)
+            self.sigreg_bn = torch.nn.BatchNorm1d(d, affine=True).to(self.device)
+            print(f"[Trainer] SIGReg BatchNorm: enabled (d={d})")
+
         # Build optimizer with BOTH adapter and predictor parameters.
         # DO NOT share optimizer across conditions (each gets a fresh one).
+        all_params = list(self.adapter.parameters()) + list(self.predictor.parameters())
+        if self.sigreg_bn is not None:
+            all_params += list(self.sigreg_bn.parameters())
         self.optimizer = torch.optim.AdamW(
-            list(self.adapter.parameters()) + list(self.predictor.parameters()),
+            all_params,
             lr=self.lr,
             weight_decay=self.weight_decay,
             betas=(0.9, 0.999),
@@ -187,6 +199,8 @@ class Trainer:
         print(f"[Trainer] sigreg_axis: {self.loss_cfg.sigreg_axis}")
         print(f"[Trainer] use_dense_info: {self.loss_cfg.use_dense_info}")
         print(f"[Trainer] lr_warmup: {self.lr_warmup}")
+        print(f"[Trainer] use_sigreg_bn: {self.loss_cfg.use_sigreg_bn}")
+        print(f"[Trainer] adapter_init_gain: {cfg.get('adapter_init_gain', 0.1)}")
 
     # ------------------------------------------------------------------
     # LR update
@@ -245,7 +259,7 @@ class Trainer:
         z_hat = self.predictor(z_c, label)  # [B, N, d]  — gradient through predictor + adapter
 
         # Compute loss (dispatches based on condition config).
-        loss_dict = compute_loss(z_c, z_t, z_hat, self.loss_cfg)
+        loss_dict = compute_loss(z_c, z_t, z_hat, self.loss_cfg, sigreg_bn=self.sigreg_bn)
         total_loss = loss_dict["total"]
 
         # Gradient check (smoke test mode only).
@@ -490,6 +504,7 @@ def main():
     adapter = PatchAdapter(
         D_in=cfg.get("D_in", 1024),
         D_out=cfg.get("d", 256),
+        init_gain=cfg.get("adapter_init_gain", 0.1),
     )
     predictor = JEPAPredictor(
         d=cfg.get("d", 256),

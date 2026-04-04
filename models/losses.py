@@ -192,6 +192,10 @@ class LossConfig:
     M_projections: int = 1024
     T_knots: int = 17
     bandwidth: float = 1.0
+    # Optional: BatchNorm before SIGReg (LeWorldModel says this is critical).
+    # When True, a BatchNorm1d layer normalises z_c per-feature across the batch
+    # BEFORE SIGReg computation. Metrics are still computed on raw z_c.
+    use_sigreg_bn: bool = False
 
 
 def compute_loss(
@@ -199,6 +203,7 @@ def compute_loss(
     z_t: torch.Tensor,
     z_hat: torch.Tensor,
     config: LossConfig,
+    sigreg_bn: Optional[torch.nn.Module] = None,
 ) -> Dict[str, torch.Tensor]:
     """Compute the combined loss for one training step.
 
@@ -222,6 +227,10 @@ def compute_loss(
         z_hat:  Predictor output, shape [B, N, d].
                 Always has gradient through predictor + adapter params.
         config: LossConfig specifying all condition-specific flags and weights.
+        sigreg_bn: Optional BatchNorm1d module for SIGReg input normalization.
+                   Used when config.use_sigreg_bn is True.
+                   Created in the trainer and passed here so its parameters
+                   are included in the optimizer.
 
     Returns:
         Dict with keys:
@@ -244,8 +253,16 @@ def compute_loss(
     # --- Rule 1: SIGReg on ADAPTER output z_c, NEVER on z_hat ---
     loss_sig = torch.tensor(0.0, device=z_c.device, dtype=z_c.dtype)
     if config.lambda_1 > 0.0:
+        # Optionally apply BatchNorm before SIGReg (LeWorldModel finding).
+        # BN normalises per-feature across the batch, ensuring SIGReg sees
+        # all dimensions at unit scale.  Metrics are computed on raw z_c.
+        z_for_sigreg = z_c
+        if config.use_sigreg_bn and sigreg_bn is not None:
+            B, N, d = z_c.shape
+            z_for_sigreg = sigreg_bn(z_c.reshape(B * N, d)).reshape(B, N, d)
+
         sig_val = apply_sigreg(
-            z_c,
+            z_for_sigreg,
             axis=config.sigreg_axis,
             M=config.M_projections,
             T_knots=config.T_knots,
@@ -291,4 +308,5 @@ def loss_config_from_dict(cfg: dict) -> LossConfig:
         M_projections  = cfg.get("M_projections", 1024),
         T_knots        = cfg.get("T_knots", 17),
         bandwidth      = cfg.get("bandwidth", 1.0),
+        use_sigreg_bn  = cfg.get("use_sigreg_bn", False),
     )

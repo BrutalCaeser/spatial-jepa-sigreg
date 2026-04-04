@@ -1,0 +1,23 @@
+# Diagnostic Run D — Batch size 128 + random init + BatchNorm before SIGReg
+# Isolate: Does BN (as LeWorldModel says is "critical") complete the picture?
+# This matches the LeWorldModel setup as closely as possible:
+#   - batch_size=128 ✓
+#   - random init ✓
+#   - BatchNorm on projector before SIGReg ✓
+#   - lambda ≈ 0.1 ✓
+
+condition:    "D3-diag-D"
+stop_grad:    false
+lambda_1:     0.1
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "global"     # K = batch_size = 128
+weight_decay: 0.01
+
+# ALL THREE CHANGES
+batch_size:        128
+adapter_init_gain: 1.0     # random init
+use_sigreg_bn:     true    # BatchNorm before SIGReg (LeWorldModel finding)
+
+log_every:    50
+eval_every:   200

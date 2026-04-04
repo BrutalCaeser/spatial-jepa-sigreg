@@ -6,9 +6,14 @@ Definition 1.2 (foundations.md):
     W1 in R^{D_in x D_in}, W2 in R^{D_in x D_out}
 
 Critical constraints (CLAUDE.md Rule 4):
-    - NO BatchNorm or LayerNorm: would mask collapse signals.
+    - NO BatchNorm or LayerNorm in forward(): would mask collapse signals.
     - NO torch.compile / torch.jit: can hide gradient flow issues.
-    - Near-identity initialization for stability at training start.
+    - Initialization gain is configurable (default 0.1 for near-identity).
+
+Note on BatchNorm: LeWorldModel (Maes et al. 2026) shows BN on the projector
+is critical for SIGReg. When use_sigreg_bn=True in the loss config, BN is
+applied OUTSIDE this module (in compute_loss) before SIGReg only. Metrics
+are always computed on raw adapter output (no BN) to preserve collapse signals.
 """
 
 import torch
@@ -24,9 +29,13 @@ class PatchAdapter(nn.Module):
     Args:
         D_in:  Input feature dimension (1024 for V-JEPA 2.1 ViT-G).
         D_out: Output representation dimension (256 default, ablate 128/512).
+        init_gain: Xavier gain for fc2 (output layer) initialization.
+            0.1 = near-identity init (original; output std ≈ 0.2)
+            1.0 = random init (output std ≈ 1.0, closer to N(0,I))
+            Both papers (LeJEPA, LeWorldModel) use random init.
     """
 
-    def __init__(self, D_in: int = 1024, D_out: int = 256):
+    def __init__(self, D_in: int = 1024, D_out: int = 256, init_gain: float = 0.1):
         super().__init__()
         # Two-layer MLP: expand (D_in->D_in), then project (D_in->D_out).
         # NO normalization layers — collapse must be observable in outputs.
@@ -34,19 +43,22 @@ class PatchAdapter(nn.Module):
         self.act = nn.GELU()
         self.fc2 = nn.Linear(D_in, D_out)
 
+        self._init_gain = init_gain
         self._init_weights()
 
     def _init_weights(self) -> None:
-        """Near-identity initialization for training stability.
+        """Initialize adapter weights.
 
         fc1: W1 ~= I (identity), b1 = 0  (preserve input signal early in training)
-        fc2: W2 ~= small random, b2 = 0  (small initial projection perturbation)
+        fc2: W2 ~ xavier_normal(gain=self._init_gain), b2 = 0
+             gain=0.1 → near-identity (small initial perturbation)
+             gain=1.0 → random init (output scale ≈ 1, closer to N(0,1) target)
         """
         # fc1: eye_ requires square matrix — D_in x D_in, so this works directly.
         nn.init.eye_(self.fc1.weight)
         nn.init.zeros_(self.fc1.bias)
-        # fc2: xavier_normal with small gain to keep early outputs close to projected input.
-        nn.init.xavier_normal_(self.fc2.weight, gain=0.1)
+        # fc2: xavier_normal with configurable gain.
+        nn.init.xavier_normal_(self.fc2.weight, gain=self._init_gain)
         nn.init.zeros_(self.fc2.bias)
 
     def forward(self, f: torch.Tensor) -> torch.Tensor:

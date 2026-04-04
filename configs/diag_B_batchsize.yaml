@@ -1,0 +1,21 @@
+# Diagnostic Run B — Batch size 128 (matching LeJEPA/LeWorldModel papers)
+# Isolate: Does batch size alone fix SIGReg?
+# Baseline: Run A = current D3 (batch=32, gain=0.1, no BN) → collapsed
+
+condition:    "D3-diag-B"
+stop_grad:    false
+lambda_1:     0.1          # Same as original D3
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "global"     # K = batch_size = 128 (vs 32 before)
+weight_decay: 0.01
+
+# THE CHANGE: batch_size 32 → 128
+batch_size:   128
+
+# Everything else unchanged from base
+adapter_init_gain: 0.1     # near-identity (original)
+use_sigreg_bn:     false   # no BN (original)
+
+log_every:    50
+eval_every:   200

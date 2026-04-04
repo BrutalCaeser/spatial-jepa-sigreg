@@ -1,0 +1,21 @@
+# Diagnostic Run C — Batch size 128 + random init (gain=1.0)
+# Isolate: Does random init (closer to N(0,I)) help SIGReg?
+# Both LeJEPA and LeWorldModel train from random init.
+# Our near-identity init (gain=0.1) gives initial std ≈ 0.2, far from N(0,1).
+
+condition:    "D3-diag-C"
+stop_grad:    false
+lambda_1:     0.1
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "global"     # K = batch_size = 128
+weight_decay: 0.01
+
+# CHANGES: batch_size + init_gain
+batch_size:        128
+adapter_init_gain: 1.0     # random init → output std ≈ 1.0
+
+use_sigreg_bn:     false   # no BN yet
+
+log_every:    50
+eval_every:   200
