@@ -5,8 +5,12 @@ condition: "B-ema"
 
 # EMA target adapter — the sole collapse prevention mechanism.
 use_ema:    true
-ema_decay:  0.996
-stop_grad:  true        # Redundant with EMA (EMA output has no grad), but explicit
+ema_decay:  0.999       # ~1000 step lag (0.996 was too fast — collapsed in 500 steps)
+stop_grad:  true        # Redundant with EMA, but explicit
+
+# Random init — near-identity (gain=0.1) starts near-collapsed,
+# giving the collapse attractor a head start over EMA asymmetry.
+adapter_init_gain: 1.0
 
 # No regularization — isolates EMA's effect.
 lambda_1:   0.0         # No SIGReg

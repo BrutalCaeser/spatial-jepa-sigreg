@@ -884,6 +884,34 @@ Cleaned `/scratch/gupta.yashv/`:
 - Debug data archived to `archive/`
 - README.md added with directory structure documentation
 
+### B_ema v1 — COLLAPSED (job 5667219)
+
+**Config:** `ema_decay=0.996` (EMA lag ≈ 250 steps), `adapter_init_gain=0.1` (near-identity).
+
+| Step | erank | L_pred | gnorm |
+|------|-------|--------|-------|
+| 200  | ~5    | 0.02   | 0.05  |
+| 500  | ~2    | 0.005  | 0.02  |
+| 1000 | 1.10  | 0.001  | 0.01  |
+
+**Root cause: EMA lag too short vs collapse timescale.**
+
+Near-identity init (gain=0.1) starts with adapter outputs ≈ 0.08 std, already
+near the collapsed basin. Collapse occurs in ~500 steps. EMA decay=0.996 gives
+a lag of only ~250 steps (1/(1-0.996)). The online adapter reaches the collapse
+fixed point before the EMA target has diverged enough to create meaningful
+prediction error.
+
+**Fix (applied to ALL EMA configs):**
+- `adapter_init_gain: 1.0` — Random init starts full-rank (std ≈ 0.87).
+  The collapse attractor must pull from a higher-erank starting point,
+  buying time for EMA asymmetry to act.
+- `ema_decay: 0.999` — Lag ≈ 1000 steps. Even if collapse starts at step 500,
+  the EMA target still reflects the step-0 representation, creating large
+  L_pred that resists collapse.
+
+Updated configs: B_ema, C_ema, D1_ema, D2_ema, D3_ema, E_ema, F_ema (all 7).
+
 ---
 
 ## Pending

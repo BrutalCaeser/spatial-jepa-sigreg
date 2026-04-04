@@ -4,8 +4,9 @@
 condition: "C-ema"
 
 use_ema:      true
-ema_decay:    0.996
+ema_decay:    0.999       # ~1000 step lag (0.996 collapsed B_ema in 500 steps)
 stop_grad:    true
+adapter_init_gain: 1.0    # Random init (gain=0.1 collapsed before EMA could act)
 
 lambda_1:     0.1       # SIGReg (global, on z_c)
 lambda_2:     0.0       # No L_info
