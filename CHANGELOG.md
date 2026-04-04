@@ -758,11 +758,30 @@ random projections has spurious local minima at low-dimensional distributions.
 
 ---
 
+## Session 9 — Path 2: L_cov + SIGReg (2026-04-03)
+
+### Code Changes
+
+- **`models/losses.py`** — Changed `l_cov(z_hat)` → `l_cov(z_c)` in `compute_loss()`.
+  L_cov must regularize the adapter output (the representation we want full-rank),
+  not the predictor output. At 1D collapse: L_cov(z_c) ≈ d-1 ≈ 255 → massive
+  anti-collapse gradient. At Cov=I: L_cov=0 → steps aside, lets L_pred + SIGReg work.
+
+- **`configs/path2_lcov_sigreg.yaml`** (new) — Path 2 experiment config:
+  - `lambda_1=0.1` (SIGReg for distributional shape)
+  - `lambda_3=0.01` (L_cov as collapse barrier; effective weight ≈ 0.01×253 ≈ 2.53 at init)
+  - `batch_size=128`, `stop_grad=false`, `sigreg_axis=global`
+  - Key idea: L_cov has NO 1D local minimum (unlike SIGReg). Its only minimum is
+    Cov(z)=I (full rank). Once L_cov prevents collapse, SIGReg shapes the distribution.
+
+### Results
+
+*Pending — job not yet submitted.*
+
+---
+
 ## Pending
 
-- **Path 2: Covariance regularisation as collapse barrier + SIGReg for Gaussianity.**
-  Replace SIGReg as the anti-collapse mechanism with ||Cov(z_pool) - I||_F²,
-  which has no 1D local minimum. Keep SIGReg for distributional shape enforcement.
 - Correct foundations.md Definition 2.3 (SIGReg is bounded, not infinite, at collapse)
 - After collapse prevention works: resubmit all 8 conditions with revised losses
 - Linear probes, analysis scripts, W&B dashboard

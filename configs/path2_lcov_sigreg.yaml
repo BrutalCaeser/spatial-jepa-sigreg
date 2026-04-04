@@ -1,0 +1,25 @@
+# Path 2: L_cov (collapse barrier) + SIGReg (distributional shape)
+#
+# Hypothesis: L_cov = ||Cov(z_c) - I||_F² has NO 1D local minimum.
+# At 1D collapse: L_cov ≈ d-1 ≈ 255 → massive anti-collapse gradient.
+# At Cov = I: L_cov = 0 → steps aside, lets L_pred + SIGReg work.
+#
+# L_cov acts as a collapse BARRIER (convex, no escape hatches).
+# SIGReg then shapes the distribution toward Gaussian once full-rank is maintained.
+#
+# lambda_3=0.01 → effective weight ≈ 0.01*253 ≈ 2.53 at init (dominates early),
+# fades to 0 as Cov→I (desired: get out of the way once collapse is prevented).
+# lambda_1=0.1  → SIGReg for distributional shape (same as prior experiments).
+
+condition:    "path2-lcov-sigreg"
+stop_grad:    false
+lambda_1:     0.1           # SIGReg (distributional shape)
+lambda_2:     0.0           # No L_info
+lambda_3:     0.01          # L_cov (collapse barrier)
+sigreg_axis:  "global"
+weight_decay: 0.01
+batch_size:   128
+lr_warmup:    true
+
+log_every:    50
+eval_every:   200

@@ -281,10 +281,14 @@ def compute_loss(
             loss_info = l_info_pooled(z_hat, z_t)
         total = total + config.lambda_2 * loss_info
 
-    # --- Optional covariance regularization ---
-    loss_cov = torch.tensor(0.0, device=z_hat.device, dtype=z_hat.dtype)
+    # --- Optional covariance regularization (applied to adapter output z_c) ---
+    # Penalizes ||Cov(z_c_pool) - I||_F².  Applied to z_c (the representation
+    # we want to keep full-rank), NOT z_hat (the predictor output).
+    # At 1D collapse: L_cov ≈ d-1 ≈ 255 (strong anti-collapse signal).
+    # At Cov = I:     L_cov = 0 (steps aside, lets L_pred + SIGReg work).
+    loss_cov = torch.tensor(0.0, device=z_c.device, dtype=z_c.dtype)
     if config.lambda_3 > 0.0:
-        loss_cov = l_cov(z_hat)
+        loss_cov = l_cov(z_c)
         total = total + config.lambda_3 * loss_cov
 
     return {
