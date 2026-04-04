@@ -774,14 +774,55 @@ random projections has spurious local minima at low-dimensional distributions.
   - Key idea: L_cov has NO 1D local minimum (unlike SIGReg). Its only minimum is
     Cov(z)=I (full rank). Once L_cov prevents collapse, SIGReg shapes the distribution.
 
-### Results
+### Results — FAILED (job 5660722, 2026-04-03)
 
-*Pending — job not yet submitted.*
+Collapse by step 400. erank=1.04 despite L_cov dominating the total loss (2.35/2.40).
+
+| Step | erank | L_pred | SIGReg | L_cov (inferred) |
+|------|-------|--------|--------|-----------------|
+| 50   | —     | 0.018  | 0.207  | ≈255            |
+| 200  | 5.62  | 0.022  | 0.195  | ≈251            |
+| 400  | 1.04  | 0.038  | 0.155  | ≈235            |
+| 800  | 1.07  | 0.042  | 0.123  | ≈219            |
+| 1000 | 1.07  | 0.038  | 0.113  | ≈217            |
+
+**Root cause — L_cov is NOT a collapse barrier:**
+
+At near-zero init (gain=0.1), Cov(z_pool) ≈ 0, so L_cov ≈ d = 256. As the
+adapter collapses toward 1D with growing variance σ₁²:
+
+    L_cov = (σ₁² - 1)² + (d - 1)
+
+As σ₁²: 0 → 1, L_cov: 256 → 255. L_cov **decreases** on the collapse path.
+
+The 1D unit-variance configuration is the minimum of L_cov on the collapse
+trajectory, not a maximum. L_cov cooperates with collapse rather than
+resisting it. Additionally, the L_cov gradient ∝ z_pool (near-zero at init),
+so it is weakest exactly when it needs to be strongest.
+
+Both L_cov and SIGReg share the same structural failure: both have spurious
+"acceptable" configurations at low-dimensional structures. Neither is a true
+gradient-sense collapse barrier.
+
+**Mechanism distinguishing VICReg variance term from L_cov:**
+
+VICReg variance: V = Σᵢ max(0, γ - std(z_pool[:, i]))
+
+Gradient in dimension i: ∂V/∂z[b,i] ∝ -1/std_i (huge as std_i → 0).
+This applies independent, growing gradient to each dead dimension. A 1D
+unit-variance collapse still leaves 255 dimensions with std≈0 → 255 terms
+with enormous gradient. V cannot be satisfied by any low-dimensional structure.
+
+L_cov gradient: ∝ (Cov - I) * z_pool (small when z_pool is small). No
+amplification near collapse — the gradient shrinks exactly when most needed.
 
 ---
 
 ## Pending
 
+- **Path 3 (candidate): VICReg variance term** as true collapse barrier.
+  V = Σᵢ max(0, γ - std(z_c_pool[:, i])). Gradient ∝ 1/std_i → ∞ as collapse.
+  No low-dimensional local minimum. This is directional (per-dim), unlike L_cov (global).
 - Correct foundations.md Definition 2.3 (SIGReg is bounded, not infinite, at collapse)
 - After collapse prevention works: resubmit all 8 conditions with revised losses
 - Linear probes, analysis scripts, W&B dashboard
