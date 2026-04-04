@@ -1,0 +1,17 @@
+# Condition B_ema — EMA target adapter only (no regularization)
+# Tests: Does EMA alone prevent collapse?
+# Expected: erank stays high (EMA breaks collapse symmetry)
+condition: "B-ema"
+
+# EMA target adapter — the sole collapse prevention mechanism.
+use_ema:    true
+ema_decay:  0.996
+stop_grad:  true        # Redundant with EMA (EMA output has no grad), but explicit
+
+# No regularization — isolates EMA's effect.
+lambda_1:   0.0         # No SIGReg
+lambda_2:   0.0         # No L_info
+
+# Standard training.
+batch_size: 128
+n_steps:    50000

@@ -1,0 +1,15 @@
+# Condition F_ema — EMA + L_info_dense only (ablation: no SIGReg)
+# Tests: Does L_info alone (with EMA) preserve information?
+# Isolates SIGReg's contribution by removing it.
+condition: "F-ema"
+
+use_ema:        true
+ema_decay:      0.996
+stop_grad:      true
+
+lambda_1:       0.0     # No SIGReg
+lambda_2:       0.1     # L_info_dense only
+use_dense_info: true
+
+batch_size: 128
+n_steps:    50000

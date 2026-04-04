@@ -47,6 +47,10 @@ sigreg_axis:    "global"   # Options: global, token, channel
 use_dense_info: true       # true = L_info_dense; false = L_info_pooled
 use_cov_reg:    false
 
+# EMA target adapter (collapse prevention — see CHANGELOG Session 10)
+use_ema:        false          # When true, target z_t comes from EMA adapter
+ema_decay:      0.996          # θ̄ ← decay·θ̄ + (1-decay)·θ  (V-JEPA default range: 0.996–0.999)
+
 # SIGReg hyperparameters (Definition 3.2, foundations.md)
 M_projections: 1024
 T_knots:       17

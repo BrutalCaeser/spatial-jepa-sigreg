@@ -1,0 +1,17 @@
+# Condition E_ema — EMA + global SIGReg + L_info_dense (proposed method)
+# Tests: Full method — collapse prevention (EMA) + distributional shaping (SIGReg)
+#        + spatial information preservation (L_info_dense)
+# Expected: highest probe accuracy, best spatial preservation
+condition: "E-ema"
+
+use_ema:        true
+ema_decay:      0.996
+stop_grad:      true
+
+lambda_1:       0.1     # SIGReg (global, on z_c)
+lambda_2:       0.1     # L_info_dense (on ẑ_t, z_t)
+sigreg_axis:    "global"
+use_dense_info: true
+
+batch_size: 128
+n_steps:    50000

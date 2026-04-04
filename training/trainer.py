@@ -29,6 +29,7 @@ Critical constraints enforced here (CLAUDE.md):
 from __future__ import annotations
 
 import argparse
+import copy
 import math
 import os
 import sys
@@ -164,6 +165,18 @@ class Trainer:
         self.adapter.to(self.device)
         self.predictor.to(self.device)
 
+        # Optional: EMA target adapter for collapse prevention.
+        # When enabled, targets z_t come from a slow-moving copy of the adapter
+        # rather than the shared-weight online adapter.  This breaks the
+        # symmetry that allows trivial collapse (see CHANGELOG Sessions 7-9).
+        self.ema_adapter = None
+        self.ema_decay = cfg.get("ema_decay", 0.996)
+        if cfg.get("use_ema", False):
+            self.ema_adapter = copy.deepcopy(adapter)
+            self.ema_adapter.requires_grad_(False)
+            self.ema_adapter.to(self.device)
+            print(f"[Trainer] EMA target adapter: enabled (decay={self.ema_decay})")
+
         # Optional: BatchNorm for SIGReg input (LeWorldModel finding).
         # BN normalises per-feature across the batch before SIGReg only.
         # Metrics are computed on raw adapter output (no BN).
@@ -200,6 +213,9 @@ class Trainer:
         print(f"[Trainer] use_dense_info: {self.loss_cfg.use_dense_info}")
         print(f"[Trainer] lr_warmup: {self.lr_warmup}")
         print(f"[Trainer] use_sigreg_bn: {self.loss_cfg.use_sigreg_bn}")
+        print(f"[Trainer] use_ema: {cfg.get('use_ema', False)}")
+        if self.ema_adapter is not None:
+            print(f"[Trainer] ema_decay: {self.ema_decay}")
         print(f"[Trainer] adapter_init_gain: {cfg.get('adapter_init_gain', 0.1)}")
 
     # ------------------------------------------------------------------
@@ -249,11 +265,18 @@ class Trainer:
 
         self.optimizer.zero_grad()
 
-        # Forward pass through adapter (shared weights for context and target).
-        # CRITICAL: z_c always has gradient (adapter params).
-        #           z_t gradient depends on condition (stop_grad flag in LossConfig).
-        z_c  = self.adapter(f_c)         # [B, N, d]  — gradient through adapter
-        z_t  = self.adapter(f_t)         # [B, N, d]  — may be detached inside compute_loss
+        # Forward pass through adapter.
+        # CRITICAL: z_c always has gradient (online adapter params).
+        z_c = self.adapter(f_c)          # [B, N, d]  — gradient through adapter
+
+        # Target computation depends on EMA setting:
+        #   EMA enabled  → z_t from slow-moving EMA adapter (no gradient by design)
+        #   EMA disabled → z_t from shared-weight adapter (may be detached in compute_loss)
+        if self.ema_adapter is not None:
+            with torch.no_grad():
+                z_t = self.ema_adapter(f_t)  # [B, N, d] — EMA target, no gradient
+        else:
+            z_t = self.adapter(f_t)          # [B, N, d] — shared weight target
 
         # Forward pass through predictor.
         z_hat = self.predictor(z_c, label)  # [B, N, d]  — gradient through predictor + adapter
@@ -278,6 +301,16 @@ class Trainer:
         ).item()
 
         self.optimizer.step()
+
+        # Update EMA adapter weights (exponential moving average).
+        if self.ema_adapter is not None:
+            with torch.no_grad():
+                for p_ema, p_online in zip(
+                    self.ema_adapter.parameters(), self.adapter.parameters()
+                ):
+                    p_ema.data.mul_(self.ema_decay).add_(
+                        p_online.data, alpha=1.0 - self.ema_decay
+                    )
 
         return {
             "train/loss_total":  total_loss.item(),
@@ -309,8 +342,11 @@ class Trainer:
             f_t   = f_t.to(self.device)
             label = label.to(self.device)
 
-            z_c  = self.adapter(f_c)
-            z_t  = self.adapter(f_t)
+            z_c = self.adapter(f_c)
+            if self.ema_adapter is not None:
+                z_t = self.ema_adapter(f_t)
+            else:
+                z_t = self.adapter(f_t)
             z_hat = self.predictor(z_c, label)
 
             z_c_list.append(z_c.cpu())
@@ -344,6 +380,8 @@ class Trainer:
             "optimizer": self.optimizer.state_dict(),
             "cfg":       self.cfg,
         }
+        if self.ema_adapter is not None:
+            ckpt["ema_adapter"] = self.ema_adapter.state_dict()
         path = self.output_dir / f"checkpoint_step{self.step:06d}.pt"
         torch.save(ckpt, path)
         print(f"[Trainer] Saved checkpoint: {path}")
@@ -354,6 +392,8 @@ class Trainer:
         self.adapter.load_state_dict(ckpt["adapter"])
         self.predictor.load_state_dict(ckpt["predictor"])
         self.optimizer.load_state_dict(ckpt["optimizer"])
+        if self.ema_adapter is not None and "ema_adapter" in ckpt:
+            self.ema_adapter.load_state_dict(ckpt["ema_adapter"])
         self.step = ckpt["step"]
         print(f"[Trainer] Resumed from step {self.step}")
 

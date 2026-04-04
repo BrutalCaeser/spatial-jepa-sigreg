@@ -818,11 +818,77 @@ amplification near collapse — the gradient shrinks exactly when most needed.
 
 ---
 
+## Session 10 — Phase 3: EMA Target Adapter (2026-04-04)
+
+### Design Decision: EMA Replaces SIGReg as Collapse Prevention
+
+After 8 failed experiments (Sessions 7–9), the conclusion is definitive:
+
+**No loss function computed from z alone can break rank-deficient collapse.**
+
+At rank-1 collapse, ∂L/∂z_b lies in the current 1D column space of Z. The
+gradient of ANY regularizer (SIGReg, L_cov, VICReg variance, log-det) is
+confined to the collapsed subspace. The parameter gradient ∂L/∂W₂ inherits
+this rank-1 structure: W₂ stays rank-1 under gradient descent regardless of
+the loss function. This is a mathematical fact about gradient flow, not a
+hyperparameter issue.
+
+**Only structural asymmetry (EMA) breaks the collapse.** EMA creates temporal
+asymmetry: the target encoder θ̄ changes slowly while the online encoder θ
+changes fast. If θ moves toward collapse, the targets (from θ̄) remain diverse
+→ L_pred stays high → gradient pushes θ back. The trivial solution is not a
+fixed point when θ̄ ≠ θ.
+
+### Revised Paper Story
+
+1. **Contribution 1 (negative):** SIGReg fails as collapse prevention.
+   1D variance trick, gradient dead zone, gradient subspace confinement.
+2. **Contribution 2 (theoretical):** Distributional regularity (Gaussianity)
+   ≠ dimensional regularity (full rank). No output-based loss can fix this.
+3. **Contribution 3 (positive):** With collapse prevented by EMA, SIGReg
+   shapes the distribution; L_info_dense preserves spatial information.
+4. **Contribution 4 (axis study):** Token vs channel vs global SIGReg
+   affects spatial structure differently (the original research question).
+
+### Code Changes
+
+- **`training/trainer.py`** — Added EMA target adapter:
+  - `use_ema` config flag creates a `copy.deepcopy` of the adapter with
+    `requires_grad_(False)`. Targets z_t computed from EMA adapter.
+  - EMA update after each optimizer step: `θ̄ ← decay·θ̄ + (1-decay)·θ`
+  - EMA adapter included in checkpoint save/load.
+  - Eval uses EMA adapter for targets (consistent with training).
+
+- **`configs/base.yaml`** — Added `use_ema: false`, `ema_decay: 0.996`.
+
+- **New condition configs** (all use EMA, batch_size=128, 50K steps):
+
+  | Config | EMA | SIGReg | L_info | What it tests |
+  |--------|-----|--------|--------|---------------|
+  | `condition_B_ema.yaml` | ✓ | — | — | EMA alone prevents collapse? |
+  | `condition_C_ema.yaml` | ✓ | global | — | SIGReg shapes distribution? |
+  | `condition_D1_ema.yaml` | ✓ | token | — | Per-token SIGReg destroys spatial? |
+  | `condition_D2_ema.yaml` | ✓ | channel | — | Per-channel SIGReg intermediate? |
+  | `condition_D3_ema.yaml` | ✓ | global | — | Global SIGReg preserves spatial? |
+  | `condition_E_ema.yaml` | ✓ | global | dense | Proposed method (full) |
+  | `condition_F_ema.yaml` | ✓ | — | dense | L_info ablation (no SIGReg) |
+
+- **`scripts/run_ema_condition.sh`** (new) — SLURM script for phase 3.
+  Logs to `logs/phase3_ema/` (organized scratch directory).
+
+### Scratch Directory Reorganized
+
+Cleaned `/scratch/gupta.yashv/`:
+- Logs sorted into `setup/`, `extraction/`, `phase1_conditions/`, `phase2_sweeps/`
+- 12 empty output directories removed
+- Debug data archived to `archive/`
+- README.md added with directory structure documentation
+
+---
+
 ## Pending
 
-- **Path 3 (candidate): VICReg variance term** as true collapse barrier.
-  V = Σᵢ max(0, γ - std(z_c_pool[:, i])). Gradient ∝ 1/std_i → ∞ as collapse.
-  No low-dimensional local minimum. This is directional (per-dim), unlike L_cov (global).
 - Correct foundations.md Definition 2.3 (SIGReg is bounded, not infinite, at collapse)
-- After collapse prevention works: resubmit all 8 conditions with revised losses
-- Linear probes, analysis scripts, W&B dashboard
+- Run all 7 EMA conditions (B_ema first as smoke test for EMA)
+- Linear probes, analysis scripts, W&B dashboard after EMA phase completes
+- Paper writing: negative finding analysis + EMA + axis study results

@@ -1,0 +1,15 @@
+# Condition C_ema — EMA + global SIGReg
+# Tests: Does SIGReg shape the distribution when collapse is already prevented?
+# Compares to B_ema (EMA only) to isolate SIGReg's distributional effect.
+condition: "C-ema"
+
+use_ema:      true
+ema_decay:    0.996
+stop_grad:    true
+
+lambda_1:     0.1       # SIGReg (global, on z_c)
+lambda_2:     0.0       # No L_info
+sigreg_axis:  "global"
+
+batch_size: 128
+n_steps:    50000

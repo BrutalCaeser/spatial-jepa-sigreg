@@ -1,0 +1,14 @@
+# Condition D2_ema — EMA + per-channel SIGReg
+# Tests: Intermediate spatial pressure — each feature dimension independently Gaussian
+condition: "D2-ema"
+
+use_ema:      true
+ema_decay:    0.996
+stop_grad:    true
+
+lambda_1:     0.1       # SIGReg (per-channel)
+lambda_2:     0.0
+sigreg_axis:  "channel"
+
+batch_size: 128
+n_steps:    50000

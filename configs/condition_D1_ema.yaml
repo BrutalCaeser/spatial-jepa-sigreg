@@ -1,0 +1,14 @@
+# Condition D1_ema — EMA + per-token SIGReg
+# Tests: Strongest spatial destruction — each token independently pushed to N(0,I)
+condition: "D1-ema"
+
+use_ema:      true
+ema_decay:    0.996
+stop_grad:    true
+
+lambda_1:     0.1       # SIGReg (per-token)
+lambda_2:     0.0
+sigreg_axis:  "token"
+
+batch_size: 128
+n_steps:    50000

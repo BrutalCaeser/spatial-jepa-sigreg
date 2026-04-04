@@ -1,0 +1,16 @@
+# Condition D3_ema — EMA + global SIGReg (same as C_ema but no stop-grad label)
+# Tests: Weakest spatial intervention — only pooled representation is Gaussian
+# Note: Identical to C_ema in practice (EMA always implies stop-grad on target).
+#       Kept as separate condition for clean correspondence with build_spec table.
+condition: "D3-ema"
+
+use_ema:      true
+ema_decay:    0.996
+stop_grad:    true
+
+lambda_1:     0.1       # SIGReg (global)
+lambda_2:     0.0
+sigreg_axis:  "global"
+
+batch_size: 128
+n_steps:    50000
