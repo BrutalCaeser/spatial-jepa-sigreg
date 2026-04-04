@@ -1,0 +1,18 @@
+# Path 1 Control: NO stop-gradient + SIGReg (lambda=1.0, batch=128)
+#
+# Same settings as path1_stopgrad but WITHOUT stop-grad.
+# Expected: collapses (same as all prior no-stop-grad runs).
+# This proves stop-grad is the critical factor, not lambda or batch size.
+
+condition:    "D3-path1-ctrl"
+stop_grad:    false         # No stop-grad → expect collapse
+lambda_1:     1.0
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "global"
+weight_decay: 0.01
+batch_size:   128
+lr_warmup:    true
+
+log_every:    50
+eval_every:   200

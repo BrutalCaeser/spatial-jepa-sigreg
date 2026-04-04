@@ -1,0 +1,20 @@
+# Path 1 Test: Stop-gradient + SIGReg (lambda=1.0, batch=128)
+#
+# Hypothesis: stop-grad breaks the DIRECT collapse attractor (gradient through z_t).
+# Without stop-grad, L_pred directly pulls adapter toward constant via z_t path.
+# With stop-grad, L_pred only affects adapter INDIRECTLY (via z_c → predictor → z_hat).
+# Near collapse, this indirect gradient is ~0 (predictor ignores z_c), so SIGReg
+# at lambda=1.0 should dominate and prevent collapse.
+
+condition:    "C-path1"
+stop_grad:    true          # THE KEY: breaks direct collapse pathway
+lambda_1:     1.0           # Moderate SIGReg weight (10x original, not 100x)
+lambda_2:     0.0
+lambda_3:     0.0
+sigreg_axis:  "global"
+weight_decay: 0.01
+batch_size:   128           # K=128 for EP test
+lr_warmup:    true
+
+log_every:    50
+eval_every:   200
