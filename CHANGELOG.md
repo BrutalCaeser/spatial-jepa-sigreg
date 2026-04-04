@@ -524,39 +524,135 @@ L_pred drops 56× while SIGReg barely moves. The **loss surface is a plateau**: 
 
 At lambda_1=0.1, SIGReg contributes ~92% of total loss but ~5% of gradient signal.
 
-### Proposed Fix: Lambda Sweep
+### Lambda Sweep 1: Global SIGReg (K=32) — FAILED
 
-**Hypothesis:** At lambda_1=10 (100× current), SIGReg gradient becomes ~0.3-0.5 (vs. current 0.003-0.005), dominating L_pred gradient (~0.01-0.05) in the critical pre-collapse window (steps 0-500). This prevents the system from ever reaching the collapsed state where gradients vanish.
+**Hypothesis:** At lambda_1=10+ (100× current), SIGReg gradient dominates L_pred, preventing collapse.
 
-**Sweep design:** Three 2000-step diagnostic runs using Condition D3 (global SIGReg, no stop-grad):
-- lambda_1 = 10.0
-- lambda_1 = 25.0
-- lambda_1 = 50.0
+**Result: ALL THREE FAILED.** erank collapsed to ~1.1 by step 400 at every lambda value.
 
-Success criterion: erank > 5 at step 2000.
+| lambda_1 | erank@200 | erank@400 | erank@800 | SIGReg@200 | SIGReg@800 |
+|----------|-----------|-----------|-----------|------------|------------|
+| 10  | 5.93 | **1.10** | 1.14 | 0.199 | **0.047** |
+| 25  | 5.60 | **1.13** | ~1.0 | 0.184 | **0.045** |
+| 50  | 5.23 | **1.06** | 1.03 | 0.183 | **0.044** |
 
-### Files Changed
-- `configs/sweep_lambda10.yaml` (new) — lambda_1=10.0
-- `configs/sweep_lambda25.yaml` (new) — lambda_1=25.0
-- `configs/sweep_lambda50.yaml` (new) — lambda_1=50.0
-- `scripts/run_lambda_sweep.sh` (new) — submits 3 short diagnostic jobs
+### Critical Finding: Global SIGReg Is Cheatable (1D Variance Trick)
+
+**SIGReg DECREASED while erank DECREASED.** The optimizer is REDUCING SIGReg by collapsing — the opposite of what should happen.
+
+**Mechanism:** The adapter collapses to a 1D subspace with direction v and variance σ₁². Random projections u see variance ≈ σ₁²·(u·v)². In expectation over random u on S^{d-1}, E[(u·v)²] = 1/d. If the adapter sets σ₁² ≈ d (= 256), then E[var(projection)] ≈ 1, making projections look like N(0,1).
+
+With only K=32 samples, the EP test has insufficient statistical power to detect that 255/256 projection directions have near-zero variance (those few samples at ~0 look compatible with N(0,1) at small sample size).
+
+**Conclusion:** Global SIGReg (K=B=32) is **structurally broken** for collapse prevention when d >> K. Higher lambda makes it WORSE (optimizer exploits loophole faster).
+
+**Note on Condition C anomaly (Session 7):** The "SIGReg decreasing while collapsing" seen in Condition C (0.209→0.070) was NOT a small-sample artifact — it was the 1D variance trick, same mechanism now confirmed at lambda=10/25/50.
+
+### Lambda Sweep 2: Token SIGReg (K=6272) — FAILED
+
+Token SIGReg uses K=B×N=32×196=6,272 samples. Hypothesis: with 6272 samples
+the EP test has enough power that the 1D variance trick cannot work.
+
+**Jobs:** 5657700 (lam10), 5657701 (lam25), 5657702 (lam50)
+
+**Result: ALSO COLLAPSED.** Same pattern — SIGReg decreases while erank decreases:
+
+| Step | erank | SIGReg | L_pred | (token lam10) |
+|------|-------|--------|--------|---------------|
+| 200  | 4.40  | 0.071  | 0.208  |               |
+| 400  | **1.12** | **0.025** | 0.145 |            |
+| 600  | **1.05** | **0.019** | 0.095 |            |
+| 800  | ~1.0  | **0.015** | 0.089  |               |
+
+The 1D variance trick works even at K=6272. The adapter collapses to a 1D
+subspace where the distribution along that direction is approximately Gaussian
+with variance tuned so random projections see ≈ N(0,1). With 6272 samples
+the distribution is even MORE convincingly Gaussian (CLT), not less.
+
+**Conclusion:** Increasing lambda or K alone does not fix SIGReg. The failure
+is not about gradient strength or statistical power — it's about our experimental
+setup differing from how the SIGReg papers (LeJEPA, LeWorldModel) use it.
+
+### Root Cause Analysis: Why Our Setup Differs From the Papers
+
+We compared our setup with the original SIGReg papers (LeJEPA, LeWorldModel):
+
+| Setting | Our setup | LeJEPA / LeWorldModel |
+|---------|-----------|----------------------|
+| Batch size | 32 | 2048–4096 |
+| Init | Near-identity (gain=0.1, std≈0.08) | Random (std≈1.0) |
+| BatchNorm on projector | No | **Yes** (LeWorldModel: "critical") |
+| Adapter output dim | 256 | 256–8192 |
+
+Three key differences identified:
+
+1. **Batch size (K=32 vs K=2048+):** Both papers use large batches. The EP test
+   on 32 samples has far less statistical power than on 2048. More importantly,
+   the 1D variance trick is harder to exploit with more samples.
+
+2. **Init gain (0.1 vs 1.0):** Our gain=0.1 gives initial output std≈0.08,
+   which is 13× too small for the N(0,1) target. SIGReg must simultaneously
+   increase scale AND prevent collapse — two competing objectives. Random init
+   (gain=1.0) starts at std≈0.87, much closer to the target.
+
+3. **BatchNorm before SIGReg:** LeWorldModel explicitly states BN on the
+   projector is critical for SIGReg to work. BN normalises each feature
+   dimension to zero mean and unit variance across the batch. This means
+   SIGReg only needs to enforce the SHAPE of the distribution (Gaussianity),
+   not the scale. Without BN, the adapter can satisfy SIGReg by tuning the
+   variance of a 1D projection without achieving true isotropy.
+
+### Diagnostic Sweep: Isolating the Three Factors
+
+Three controlled 2000-step runs on Condition D3 (global SIGReg, no stop-grad,
+lambda_1=0.1). Each adds one factor cumulatively:
+
+| Run | batch_size | init_gain | BN  | What it isolates | Job ID |
+|-----|-----------|-----------|-----|-----------------|--------|
+| A (done) | 32 | 0.1 | No | Baseline — collapsed | (prior) |
+| B | **128** | 0.1 | No | Batch size alone? | 5659135 |
+| C | **128** | **1.0** | No | + random init? | 5659136 |
+| D | **128** | **1.0** | **Yes** | + BatchNorm? (full fix) | 5659137 |
+
+**Reading guide:**
+- B works → batch size was the issue (K=32 too few)
+- B fails, C works → random init is key (starting near N(0,I))
+- B+C fail, D works → BN is critical (confirms LeWorldModel finding)
+- All fail → SIGReg genuinely doesn't work for frozen-feature adapter setup.
+  **That IS a valid paper finding.**
+
+### Code Changes
+
+- `models/adapter.py` — Added `init_gain` parameter (default 0.1, backward-compatible).
+  gain=0.1 gives near-identity init (std≈0.08), gain=1.0 gives random init (std≈0.87).
+- `models/losses.py` — Added `use_sigreg_bn` flag in LossConfig. When True,
+  a BatchNorm1d layer normalises z_c per-feature across the batch BEFORE SIGReg.
+  Metrics are always computed on raw z_c (no BN) so collapse is still observable.
+- `training/trainer.py` — Creates optional BN module, includes its parameters
+  in the optimizer, passes it to compute_loss. Prints `use_sigreg_bn` and
+  `adapter_init_gain` in the config summary.
+- `configs/diag_B_batchsize.yaml` — batch_size=128 only
+- `configs/diag_C_initgain.yaml` — batch_size=128 + init_gain=1.0
+- `configs/diag_D_withbn.yaml` — batch_size=128 + init_gain=1.0 + use_sigreg_bn=True
+
+### Files Changed (Session 8 cumulative)
+- `configs/sweep_lambda{10,25,50}.yaml` (new) — global lambda sweep
+- `configs/sweep_token_lam{10,25,50}.yaml` (new) — token lambda sweep
+- `configs/diag_{B,C,D}_*.yaml` (new) — diagnostic sweep configs
+- `scripts/run_lambda_sweep.sh` (new) — lambda sweep SLURM script
+- `scripts/run_diagnostic.sh` (new) — diagnostic sweep SLURM script
+- `models/adapter.py` — configurable init_gain
+- `models/losses.py` — optional use_sigreg_bn
+- `training/trainer.py` — BN module creation, init_gain passthrough
 - `CHANGELOG.md` — this entry
-
-### Architecture Validation Notes
-
-The MLP adapter + transformer predictor architecture is sound for this study:
-- Token-wise MLP preserves spatial independence (no confounding with SIGReg axis effects)
-- Transformer predictor with AdaLN is standard for action-conditioned JEPA prediction
-- **Shared adapter weights are intentional** — they create the collapse attractor that SIGReg must overcome. This IS the experiment.
-- Potential improvements for later: increase batch size (K=32 may be too few for reliable EP test), wider adapter (d=512 for more capacity), or random init (start closer to N(0,I))
 
 ---
 
 ## Pending
 
-- Run lambda sweep (3 short jobs, 2000 steps each)
-- Analyse sweep results: identify minimum lambda_1 that prevents collapse
-- Update all condition configs with working lambda_1
-- Resubmit all 6 conditions (C, D1, D2, D3, E, F) with corrected lambda_1
+- **ACTIVE:** Monitor diagnostic sweep (jobs 5659135–5659137, 2000 steps each)
+- Based on diagnostic results: update all condition configs with working settings
+- Resubmit all 8 conditions with corrected setup
 - Correct foundations.md Definition 2.3 (SIGReg is bounded, not infinite, at collapse)
+- After all 8 conditions complete: linear probes, analysis scripts, W&B dashboard
 - After all 8 conditions complete: linear probes, analysis scripts, W&B dashboard
