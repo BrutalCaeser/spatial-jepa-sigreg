@@ -621,6 +621,57 @@ lambda_1=0.1). Each adds one factor cumulatively:
 - All fail → SIGReg genuinely doesn't work for frozen-feature adapter setup.
   **That IS a valid paper finding.**
 
+### Diagnostic Sweep Results: ALL THREE FAILED
+
+| Run | Intervention | erank@200 | erank@400 | erank@600 | SIGReg@200 | SIGReg@500 |
+|-----|-------------|-----------|-----------|-----------|------------|------------|
+| A (baseline) | none (B=32, gain=0.1, no BN) | ~5 | ~1.0 | ~1.0 | 0.204 | 0.204 |
+| B | batch=128 | 5.75 | **1.03** | 1.06 | 0.207 | 0.205 |
+| C | batch=128 + gain=1.0 | 4.89 | **1.05** | (running) | 0.232 | 0.208 |
+| D | batch=128 + gain=1.0 + BN | 4.90 | **1.05** | 1.04 | 0.123 | 0.113 |
+
+**Every combination collapsed to erank ≈ 1.03–1.05 by step 400.**
+
+Per-run analysis:
+
+**Run B (batch=128 only):** SIGReg stuck at 0.205 — completely ignored by the
+optimizer. L_pred drops 0.018→0.001 while gnorm falls to 0.011. Batch size
+alone doesn't help because at lambda_1=0.1, SIGReg contributes only 0.02 to
+the total loss (L_pred ≈ 0.5–2.5 initially). The optimizer has no reason to
+even look at SIGReg.
+
+**Run C (batch=128 + gain=1.0):** Initial SIGReg is much higher (0.463) because
+random init + GELU produces a non-Gaussian distribution. SIGReg drops rapidly
+(0.463→0.208) as the adapter learns to be more Gaussian — but this trajectory
+IS the collapse. The adapter converges to a collapsed point that also happens
+to be somewhat Gaussian-looking.
+
+**Run D (batch=128 + gain=1.0 + BN):** SIGReg starts LOW (0.122) because BN
+normalises each feature to mean=0, std=1 before the EP test. This is
+**counterproductive**: at 1D collapse, BN normalises the single dominant
+direction across all 256 features, making the collapsed representation LOOK
+256-dimensional to SIGReg. The erank (computed on raw z_c, not BN-normalised)
+still drops to 1.05. BN masks the collapse rather than preventing it.
+
+### Definitive Conclusion
+
+**SIGReg at lambda_1=0.1 cannot prevent collapse** regardless of batch size,
+init gain, or BatchNorm. The weighted SIGReg contribution (λ₁ × 0.20 = 0.02)
+is negligible compared to L_pred (0.5–2.5 initially). The optimizer ignores it.
+
+Combined with the earlier lambda sweep result (lambda_1=10–50 enables the 1D
+variance trick where the optimizer REDUCES SIGReg by collapsing), the full
+picture is:
+
+- **Low lambda (0.1):** SIGReg is too weak — ignored by the optimizer
+- **High lambda (10–50):** SIGReg has spurious minima at 1D — exploited by the optimizer
+- **BatchNorm:** Masks collapse from SIGReg rather than preventing it
+- **Batch size / init:** Secondary factors that don't address the structural issue
+
+**SIGReg cannot replace stop-gradient/EMA as a collapse prevention mechanism
+in a shared-weight JEPA adapter architecture.** This is a genuine negative
+finding suitable for the paper.
+
 ### Code Changes
 
 - `models/adapter.py` — Added `init_gain` parameter (default 0.1, backward-compatible).
@@ -650,9 +701,12 @@ lambda_1=0.1). Each adds one factor cumulatively:
 
 ## Pending
 
-- **ACTIVE:** Monitor diagnostic sweep (jobs 5659135–5659137, 2000 steps each)
-- Based on diagnostic results: update all condition configs with working settings
-- Resubmit all 8 conditions with corrected setup
+- Diagnostic sweep complete (all 3 collapsed). Need to decide paper direction:
+  - Option 1: Frame as negative finding — "SIGReg alone cannot prevent collapse
+    in shared-weight adapter architectures"
+  - Option 2: Add stop-gradient to conditions that need collapse prevention,
+    keep SIGReg for distributional shaping (Gaussianity enforcement, not
+    collapse prevention). Rerun all 8 conditions accordingly.
+  - Option 3: Add EMA target encoder. SIGReg becomes supplementary.
 - Correct foundations.md Definition 2.3 (SIGReg is bounded, not infinite, at collapse)
-- After all 8 conditions complete: linear probes, analysis scripts, W&B dashboard
-- After all 8 conditions complete: linear probes, analysis scripts, W&B dashboard
+- After direction decided: resubmit all 8 conditions, linear probes, analysis, W&B
